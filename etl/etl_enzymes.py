@@ -9,7 +9,7 @@
 
 2. **只补充 + 只新增**。按来源整段替换(`DELETE WHERE source_type=<s>` 后重灌),
    **不是**「读现有 -> 过滤掉已存在的」。后者是「已存在就跳过」: 已有酶的新名字、
-   新 GO 永远进不来 —— `update_tool/backfill_etl_gaps.py` 就是为这个缺陷打的补丁。
+   新 GO 永远进不来。
 
 ## 基础集合 = names_split(全部条目), 不是 rhea_summary
 
@@ -42,7 +42,7 @@ from sources import SOURCE_PRIORITY, read_segmented  # noqa: E402
 engine = create_engine(DB_URL)
 
 NAMES_FILE = 'for_enzyme_detail/child_tables/uniprotkb_names_split.tsv'
-RHEA_SUMMARY_FILE = 'for_enzyme_reation_card/uniprotkb_rhea_summary.tsv'
+RHEA_SUMMARY_FILE = 'for_enzyme_reaction_card/uniprotkb_rhea_summary.tsv'
 
 # 来源 -> review_status。写成映射而不是 if/else, 未知来源直接报错 ——
 # 「猜一个默认值」会让新来源的审核状态静默变成错的。

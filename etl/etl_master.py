@@ -24,7 +24,7 @@ from sqlalchemy import create_engine, text
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import DB_URL  # noqa: E402
 from db_utils import schema_ddl  # noqa: E402
-from sources import (columns_of, indexed_groups, indexed_width, read_segmented,  # noqa: E402
+from sources import (columns_of, indexed_groups, read_segmented,  # noqa: E402
                      safe_usecols)
 
 engine = create_engine(DB_URL)
@@ -83,22 +83,6 @@ def _first_clean(row, columns):
         if value:
             return value
     return None
-
-
-def _collect_indexed_links(row, id_prefix, link_prefix, max_index, category):
-    links = []
-    for i in range(1, max_index + 1):
-        accession = _clean_value(row.get(f"{id_prefix}_{i}"))
-        if not accession:
-            continue
-        links.append({
-            "link_category": category,
-            "accession": accession,
-            "url": _clean_value(row.get(f"{link_prefix}_{i}")),
-            "related_accession": None,
-            "related_url": None,
-        })
-    return links
 
 
 def _ensure_sequence_link_table():

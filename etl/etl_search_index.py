@@ -68,8 +68,8 @@ engine = create_engine(DB_URL)
 
 # 分段表(11 张): 每个来源一份 for_*/<name>.<source>.tsv, 由 sources.read_segmented 取并集。
 TERPENE_ONLY_FILE = "for_graph/uniprotkb_terpene_only.tsv"
-RHEA_SUMMARY_FILE = "for_enzyme_reation_card/uniprotkb_rhea_summary.tsv"
-ENZYME_MERGED_FILE = "for_enzyme_reation_card/uniprotkb_enzyme_merged.tsv"
+RHEA_SUMMARY_FILE = "for_enzyme_reaction_card/uniprotkb_rhea_summary.tsv"
+ENZYME_MERGED_FILE = "for_enzyme_reaction_card/uniprotkb_enzyme_merged.tsv"
 MASTER_FILE = "for_enzyme_detail/uniprotkb_master.tsv"
 NAMES_FILE = "for_enzyme_detail/child_tables/uniprotkb_names_split.tsv"
 RHEA_FILE = "for_enzyme_detail/child_tables/uniprotkb_rhea.tsv"

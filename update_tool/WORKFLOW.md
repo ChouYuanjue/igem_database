@@ -11,7 +11,7 @@
 > | §1 / §3 / §8 的 `python run_all.py`(无 `--source`) | **强制** `--source=<s>` 或 `--merge` 二选一,裸跑打印用法并退出 |
 > | §3 / §8 的 `python update_database.py`(一条命令) | **三条**:`--source=swiss_prot` / `--source=trembl` / `--merge` |
 > | §4 的检索词 `(terpene) AND reviewed:true` → 1524 条 | 单个检索词 `(terpene)`,**本地**按 `Reviewed` 列拆两段(1,535 + 94,334) |
-> | §3 / §8.2 的 `run_workflow.sh` / `run_workflow.py` | **已坏,不要跑** —— 分段改造前的遗留入口 |
+> | §3 / §8.2 的 `run_workflow.sh` / `run_workflow.py` | **已于 2026-10-02 删除** —— 分段改造前的遗留入口 |
 > | §2 的目录表(`update_tool/output_*.tsv`) | 产出落在 `_src/<source>/`(11 张)与 `_merged/`(3 张) |
 > | §8.1 的「列头校验跳过」 | 宽度动态的 5 张表**默认放行**;另加收缩保护(默认拒绝)与空表保护 |
 >
@@ -72,17 +72,11 @@ run_all.py                   # ② 一键重建 14 张表(部分步骤联网,有
 
 ## 3. 快速开始
 
-**方式一:一键启动脚本(推荐,覆盖全流程)**
+**方式一(已删除)**:`run_workflow.sh` / `run_workflow.py` 是分段改造前的一键启动器,
+只包这套「一条命令」的旧流程,已于 2026-10-02 删除。当前的全量部署入口以
+[../README.md](../README.md) 的「全量部署」为准(三条命令)。
 
-```bash
-cd update_tool
-./run_workflow.sh --dry-run   # 先看计划,不执行
-./run_workflow.sh             # 下载 -> 重建 -> 部署(自动备份),一条龙
-```
-
-Python 版等价:`python run_workflow.py [--dry-run]`。配置通过环境变量(见 §8.2)。
-
-**方式二:手动三步**
+**方式二:手动三步(下文的命令已过期,见顶部说明)**
 
 ```bash
 cd update_tool
@@ -147,8 +141,8 @@ python update_database.py
 | output_rhea.tsv | for_enzyme_detail/child_tables/uniprotkb_rhea.tsv | 反应子表 |
 | output_references.tsv | for_enzyme_detail/child_tables/uniprotkb_references.tsv | 参考文献子表 |
 | output_sequence_links.tsv | for_enzyme_detail/child_tables/uniprotkb_sequence_links.tsv | 核酸序列链接子表 |
-| output_rhea_summary.tsv | for_enzyme_reation_card/uniprotkb_rhea_summary.tsv | 反应卡摘要 |
-| output_enzyme_merged.tsv | for_enzyme_reation_card/uniprotkb_enzyme_merged.tsv | 酶-反应合并 |
+| output_rhea_summary.tsv | for_enzyme_reaction_card/uniprotkb_rhea_summary.tsv | 反应卡摘要 |
+| output_enzyme_merged.tsv | for_enzyme_reaction_card/uniprotkb_enzyme_merged.tsv | 酶-反应合并 |
 | output_terpene_only.tsv | for_graph/uniprotkb_terpene_only.tsv | 反应-底物产物(每反应一行) |
 | output_terpene_pairs.tsv | for_graph/uniprotkb_terpene_pairs.tsv | 底物→产物对 |
 | output_terpene_compounds.tsv | for_compound_card/uniprotkb_terpene_compounds.tsv | 化合物卡 |
@@ -236,31 +230,11 @@ python update_database.py               # 正式覆盖(旧表先备份到 _backu
   (已验证:沙箱覆盖→备份→回滚→逐字节还原,全部通过)。
 - 常用参数:`--target=output_master.tsv`(只更新指定表)、`--no-backup`(不备份,不推荐)。
 
-### 8.2 一键启动脚本 run_workflow.py / run_workflow.sh
+### 8.2 一键启动脚本 run_workflow.py / run_workflow.sh(已删除)
 
-覆盖全流程 `download_uniprot.py → run_all.py --force → update_database.py` 的启动器。
-配置优先级:**环境变量 > 脚本内 CONFIG 默认值**。
-
-| 环境变量 | 含义 | 默认 |
-|---|---|---|
-| `UNI_DOWNLOAD_DIR` | 下载目录(统一表落盘位置) | update_tool/ |
-| `UNI_OUTPUT_DIR` | 输出目录(14 张表) | update_tool/ |
-| `UNI_BACKUP_DIR` | 部署前旧表备份目录 | 空 = 自动 `_backup_<时间戳>/` |
-| `UNI_TARGET_ROOT` | 部署目标根(旧表所在根) | 数据库根(../) |
-| `UNI_QUERY` | UniProt 检索词 | `(terpene) AND reviewed:true` |
-| `UNI_DRY_RUN` | `1/true/yes` = 只打印不执行 | 0 |
-| `UNI_SKIP_DOWNLOAD` | `1` = 跳过下载,用现有统一表 | 0 |
-| `UNI_SKIP_UPDATE` | `1` = 跳过部署 | 0 |
-
-```bash
-./run_workflow.sh --dry-run                     # 打印计划
-UNI_SKIP_UPDATE=1 ./run_workflow.sh             # 只下载+重建, 不部署
-UNI_OUTPUT_DIR=./_test_out ./run_workflow.sh    # 输出到自定义目录
-```
-
-需要联网的步骤失败时:脚本带重试;fetch_isoform/fetch_references/fetch_sequence_links/build_all_nodes
-会写断点缓存,删掉半截 `output_*.tsv` 后重跑即可断点续传。fetch_rhea / build_terpene_only
-(Rhea SPARQL)无缓存,失败需整体重跑该步(已带重试与限速)。
+这两个脚本是分段改造前的启动器,只包旧的「一条命令」流程(不带 `--source`/`--merge`),
+被 `run_all.py` 直接拒绝退出,已于 2026-10-02 删除。下方那套 `UNI_*` 环境变量随之失效,
+保留仅作留档;当前的部署入口见 [../README.md](../README.md)。
 
 ---
 

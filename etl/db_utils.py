@@ -2,8 +2,7 @@
 
 方案「只补充 + 只新增」的规则: 命中已有身份 -> **原地更新**, 未命中 -> 新增。
 绝不能「读现有 -> 过滤掉已存在的」再 append —— 那是「已存在就跳过」,
-已有行的字段改善(smiles / equation 等)永远进不来, 而
-`update_tool/backfill_etl_gaps.py` 正是为这个缺陷打的补丁。
+已有行的字段改善(smiles / equation 等)永远进不来。
 """
 import os
 import re

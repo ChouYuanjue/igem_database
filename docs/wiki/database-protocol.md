@@ -82,13 +82,14 @@ reads. Within each, a file suffixed `.<source>.tsv` is a per-source segment and 
 | Directory | Contents |
 |---|---|
 | `for_enzyme_detail/` | `uniprotkb_master.{swiss_prot,trembl,}.tsv`, plus `child_tables/` — seven child tables (names, Rhea links, references, sequence links, GO, isoforms, solubility scores) |
-| `for_enzyme_reation_card/` | `uniprotkb_enzyme_merged.*`, `uniprotkb_rhea_summary.*` |
+| `for_enzyme_reaction_card/` | `uniprotkb_enzyme_merged.*`, `uniprotkb_rhea_summary.*` |
 | `for_compound_card/` | `uniprotkb_terpene_compounds.tsv` |
 | `for_graph/` | `all_nodes.tsv`, `uniprotkb_terpene_only.*`, `uniprotkb_terpene_pairs.tsv` |
 
-> ⚠️ `for_enzyme_reation_card` is **misspelled upstream** ("reation" for "reaction") and is read
-> under that spelling by `etl_edges.py` and `etl_enzymes.py`. Do not rename the directory without
-> changing both.
+> ℹ️ This directory was misspelled `for_enzyme_reation_card` ("reation" for "reaction") until
+> 2026-10-02, and `etl_enzymes.py` / `etl_search_index.py` read it under that spelling. Directory
+> and readers were renamed together. A database loaded before that date still carries the old path
+> in `search_index.source_file` until `etl_run.py` is re-run.
 
 ### 2.3 Development artifacts
 
@@ -96,24 +97,27 @@ While building this database we kept a set of throwaway scripts, and the measure
 at the repo root. **None of it is needed to run the pipeline or the web app**, and it is excluded
 from the disk figures in §3.1. We have since pruned it; this section records what was there.
 
-**Almost none of it was ever in this repository.** The three rules that kept it out (`/_*.py`,
-`/_*.ps1`, `/_*.json`) are still in `.gitignore`. The exceptions are called out in the table.
+**Almost none of it was ever in this repository.** The rules that kept it out (`/_*.py`,
+`/_*.ps1`, `/_*.log`, plus the five JSON patterns `/_graph_*.json`, `/_iso_*.json`, `/_ab_*.json`,
+`/_pool_*.json`, `/st_*.json`) are still in `.gitignore`. There is deliberately **no bare
+`/_*.json` rule** — it would also match the tracked `update_tool/_allnodes_inchikey.json`.
+The exceptions are called out in the table.
 
 | Group | Count | Status | What it was |
 |---|---|---|---|
 | `_*.py` at the repo root | 24 | *deleted 2026-10-02* | Probe and measurement scripts. Nothing imported them — but "read-only" would be the wrong description: `_pfx.py` ran an `ALTER TABLE ... ADD INDEX` against `search_index` (the same index `sql/schema.sql` creates), `_perf3.py` truncated a `performance_schema` monitoring table, and five of them wrote the JSON snapshots below. |
 | `_*.json` at the repo root | 9 | *deleted 2026-10-02* | Measurement snapshots those probes wrote — A/B payload pairs, buffer-pool comparisons. |
 | `_*.ps1` at the repo root | 4 | *deleted 2026-10-02* | One-time MySQL setup — move `datadir`, set `tmpdir`, persist the buffer pool, drop the stale pre-move datadir. Each hard-coded the drive letters, install path and service name of the machine it ran on. All four had already been applied there; §3.2 and §9 spell the same operations out as steps, so nothing depends on the scripts. |
-| **`ge60.json`, `graph_full.json`, `group_edges.json`** | 3 | **tracked in this repository** | Graph payload captures, **~350 KB total**. These three *are* committed — they arrived with an early whole-workspace sync commit rather than as a deliberate choice, and they are the only files in this section a reader will actually find in a clone. |
+| **`ge60.json`, `graph_full.json`, `group_edges.json`** | 3 | **tracked in this repository** | Graph payload captures, **~350 KB total**. These three *are* committed — they arrived with an early whole-workspace sync commit rather than as a deliberate choice, and along with `icon.png` below they are the only files in this section a reader will actually find in a clone. |
 | `st_600.json`, `st_2000.json` | 2 | untracked | Captures of the same kind, written later. |
 | `_db_backup/`, `_dbbackup/`, `_pre_merge_backup_<timestamp>/` | — | untracked | Database dumps, **~1.2 GB combined** |
 | `_mysql_move.log`, `mysqldata_copy.log` | — | untracked | Logs from the MySQL directory move |
 | `uniprotkb_terpene_parsed.{swiss_prot,trembl}.tsv` | 2 | untracked | The **parsed intermediate** written by `update_tool/parse_names.py` (1,536 + 94,335 rows) — not the raw download. The **runtime** ETL does not read them (it reads `for_*/` only), but `update_tool/build_names_split.py` does take them as its input, so they sit on the re-build chain rather than the serving path. Both are byte-identical duplicates of `update_tool/_src/{swiss_prot,trembl}/output_parsed.tsv`. The download they were parsed from (`uniprotkb_terpene_AND_reviewed_true_2026_07_10.tsv`) is no longer on this machine. |
-| `icon.png` | 1 | untracked | Site icon |
+| `icon.png` | 1 | **tracked in this repository** | Site icon |
 
 `update_tool/` keeps its own working directories — `_src/` (staging), `_merged/` (merge staging),
-`_sandbox/` (the sandbox tree used by `IGEM_DATA_DIR`, §3.5), `_t/`, `_deploy_backup/` — plus
-`chebi_data/` (including `curation_overrides.tsv`) and `child_tables/`.
+`_sandbox/` (the sandbox tree used by `IGEM_DATA_DIR`, §3.5) — plus `chebi_data/` (including
+`curation_overrides.tsv`) and `child_tables/`.
 
 The measurements quoted throughout this page came out of the scripts in the first three groups. Now
 that those are gone, the figures are a record of one machine at one time; the ones derived from a
@@ -475,7 +479,7 @@ The producing run is **not part of this repository**. What is in the repository 
 per-enzyme table, converted to the same shape as the other child tables:
 
 ```
-for_enzyme_detail/child_tables/uniprotkb_solubility_score.tsv          (merged, no Source column)
+for_enzyme_detail/child_tables/uniprotkb_solubility_score.tsv          (legacy merged copy — the loader does NOT read this one)
 for_enzyme_detail/child_tables/uniprotkb_solubility_score.swiss_prot.tsv
 for_enzyme_detail/child_tables/uniprotkb_solubility_score.trembl.tsv
 ```
@@ -492,7 +496,8 @@ Columns consumed by the loader:
 | 6 | `Sequence Length` | Residue count, used for stratification and QA |
 | 7 | `Source` | `swiss_prot` / `trembl` (segment files only) |
 
-The loader (`etl_master.load_solubility_scores`) reads these files as the last sub-step of stage 5 and
+The loader (`etl_master.load_solubility_scores`) goes through `read_segmented()`, so it reads the
+**two segment files and ignores the unsuffixed copy**. It runs as the last sub-step of stage 5 and
 writes `enzyme_solubility_score`:
 
 | Column | Type | Note |

@@ -76,35 +76,38 @@
 | 目录 | 内容 |
 |---|---|
 | `for_enzyme_detail/` | `uniprotkb_master.{swiss_prot,trembl,}.tsv`,以及 `child_tables/`——七张子表(名称、Rhea 链接、参考文献、序列链接、GO、异构体、溶解度分数) |
-| `for_enzyme_reation_card/` | `uniprotkb_enzyme_merged.*`、`uniprotkb_rhea_summary.*` |
+| `for_enzyme_reaction_card/` | `uniprotkb_enzyme_merged.*`、`uniprotkb_rhea_summary.*` |
 | `for_compound_card/` | `uniprotkb_terpene_compounds.tsv` |
 | `for_graph/` | `all_nodes.tsv`、`uniprotkb_terpene_only.*`、`uniprotkb_terpene_pairs.tsv` |
 
-> ⚠️ 目录名 `for_enzyme_reation_card` **上游就拼错了**("reation" 应为 "reaction"),而
-> `etl_edges.py` 与 `etl_enzymes.py` 就是按这个拼法去读的。**不要**只改目录名而不改这两处。
+> ℹ️ 目录名在 2026-10-02 之前拼错为 `for_enzyme_reation_card`("reation" 应为 "reaction"),
+> `etl_enzymes.py` 与 `etl_search_index.py` 当时就按这个拼法去读。目录名与读取方已一起改名。
+> 在该日期之前灌过库的,`search_index.source_file` 里仍是旧路径,直到重跑一次 `etl_run.py`。
 
 ### 2.3 开发期产物
 
 建库期间我们在仓库根目录留了一组随手写的脚本和它们产出的测量数据。**跑流水线或 Web 应用
 都不需要**,也不计入 §3.1 的磁盘数字。现在这些已经清理掉了,这一节是留档。
 
-**它们几乎都不在本仓库里。** 把它们挡在外面的三条规则(`/_*.py`、`/_*.ps1`、`/_*.json`)
-仍在 `.gitignore` 里。例外在下表中单独标出。
+**它们几乎都不在本仓库里。** 把它们挡在外面的规则(`/_*.py`、`/_*.ps1`、`/_*.log`,以及
+五条 JSON 模式 `/_graph_*.json`、`/_iso_*.json`、`/_ab_*.json`、`/_pool_*.json`、
+`/st_*.json`)仍在 `.gitignore` 里。这里**故意没有**裸的 `/_*.json` 规则——它会把被跟踪的
+`update_tool/_allnodes_inchikey.json` 一起误伤。例外在下表中单独标出。
 
 | 组 | 数量 | 现状 | 是什么 |
 |---|---|---|---|
 | 根目录 `_*.py` | 24 | *2026-10-02 已删* | 探针与测量脚本。没有任何代码 import 它们——但说成「只读」是不准确的:`_pfx.py` 对 `search_index` 跑过 `ALTER TABLE ... ADD INDEX`(就是 `sql/schema.sql` 建的那个索引),`_perf3.py` 清空过 `performance_schema` 的一张监控表,另外 5 个写出了下面的 JSON 快照。 |
 | 根目录 `_*.json` | 9 | *2026-10-02 已删* | 上述探针写出的测量快照——A/B 载荷对照、缓冲池对比。 |
 | 根目录 `_*.ps1` | 4 | *2026-10-02 已删* | 一次性的 MySQL 配置——搬 `datadir`、设 `tmpdir`、把缓冲池落盘、删掉搬移前的旧 datadir。每个都写死了它跑的那台机器的盘符、安装路径和服务名。四件事在那台机器上都**已经做完**;§3.2 与 §9 把这些操作写成了步骤,不依赖脚本本身。 |
-| **`ge60.json`、`graph_full.json`、`group_edges.json`** | 3 | **在本仓库里(被跟踪)** | 图谱载荷抓取,**合计约 350 KB**。这三个**确实**提交了——它们是随一次早期的整树同步提交进来的,不是有意为之,也是本节里唯一能在克隆中真正看到的文件。 |
+| **`ge60.json`、`graph_full.json`、`group_edges.json`** | 3 | **在本仓库里(被跟踪)** | 图谱载荷抓取,**合计约 350 KB**。这三个**确实**提交了——它们是随一次早期的整树同步提交进来的,不是有意为之,连同下面的 `icon.png` 也是本节里唯一能在克隆中真正看到的文件。 |
 | `st_600.json`、`st_2000.json` | 2 | 未跟踪 | 同类抓取,时间更晚。 |
 | `_db_backup/`、`_dbbackup/`、`_pre_merge_backup_<时间戳>/` | — | 未跟踪 | 数据库转储,**合计约 1.2 GB** |
 | `_mysql_move.log`、`mysqldata_copy.log` | — | 未跟踪 | MySQL 目录搬移的日志 |
 | `uniprotkb_terpene_parsed.{swiss_prot,trembl}.tsv` | 2 | 未跟踪 | `update_tool/parse_names.py` 写出的**解析中间件**(1536 + 94335 行),不是原始下载。**运行时** ETL 不读它们(只读 `for_*/`),但 `update_tool/build_names_split.py` 把它们当输入,所以它们属于**重建链**而不是服务路径。两份都与 `update_tool/_src/{swiss_prot,trembl}/output_parsed.tsv` 逐字节相同。它们解析自的那个原始下载(`uniprotkb_terpene_AND_reviewed_true_2026_07_10.tsv`)在本机已经没有了。 |
-| `icon.png` | 1 | 未跟踪 | 站点图标 |
+| `icon.png` | 1 | **在本仓库里(被跟踪)** | 站点图标 |
 
 `update_tool/` 下还有自己的几个工作目录——`_src/`(暂存)、`_merged/`(合并暂存)、`_sandbox/`
-(`IGEM_DATA_DIR` 指向的沙箱树,§3.5)、`_t/`、`_deploy_backup/`——以及 `chebi_data/`
+(`IGEM_DATA_DIR` 指向的沙箱树,§3.5)——以及 `chebi_data/`
 (含 `curation_overrides.tsv`)和 `child_tables/`。
 
 本页引用的那些测量数字,都出自上表前四组里的脚本。脚本既然已经删了,这些数字就只是**某台机器
@@ -429,7 +432,7 @@ npm run build      # tsc -b && vite build  →  dist/
 **产分那一次运行不在本仓库里。** 仓库里有的是产出的逐酶分数表,已转换成与其他子表一致的形态:
 
 ```
-for_enzyme_detail/child_tables/uniprotkb_solubility_score.tsv          (合并表,无 Source 列)
+for_enzyme_detail/child_tables/uniprotkb_solubility_score.tsv          (旧的无后缀合并表——装载程序**不读**这一份)
 for_enzyme_detail/child_tables/uniprotkb_solubility_score.swiss_prot.tsv
 for_enzyme_detail/child_tables/uniprotkb_solubility_score.trembl.tsv
 ```
@@ -446,8 +449,8 @@ for_enzyme_detail/child_tables/uniprotkb_solubility_score.trembl.tsv
 | 6 | `Sequence Length` | 残基数,供分层与 QA |
 | 7 | `Source` | `swiss_prot` / `trembl`(仅分段表有) |
 
-装载程序(`etl_master.load_solubility_scores`)在第 5 阶段的最后一步读这些文件,写入
-`enzyme_solubility_score`:
+装载程序(`etl_master.load_solubility_scores`)走的是 `read_segmented()`,所以它**只读两份分段表、
+不读无后缀的那一份**。它在第 5 阶段的最后一步运行,写入 `enzyme_solubility_score`:
 
 | 列 | 类型 | 说明 |
 |---|---|---|

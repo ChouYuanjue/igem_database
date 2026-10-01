@@ -154,7 +154,7 @@ python update_database.py --merge             --dry-run
 
 ```
 for_enzyme_detail/child_tables/uniprotkb_{go,isoform_sequences,names_split,references,rhea,sequence_links}.<source>.tsv
-for_enzyme_reation_card/uniprotkb_{enzyme_merged,rhea_summary}.<source>.tsv
+for_enzyme_reaction_card/uniprotkb_{enzyme_merged,rhea_summary}.<source>.tsv
 for_enzyme_detail/uniprotkb_master.<source>.tsv
 for_graph/uniprotkb_terpene_only.<source>.tsv
 uniprotkb_terpene_parsed.<source>.tsv                    ← 落在**仓库根目录**
@@ -276,14 +276,16 @@ npm run dev
 
 `run_all.py` **默认跳过已存在的输出**；要强制全重跑加 `--force`。
 
-### G. 不要跑的东西
+### G. 已删除的旧入口
+
+这两个脚本已于 2026-10-02 从 `update_tool/` 删除，在此留档说明它们为什么不在了：
 
 - **`run_workflow.py` / `run_workflow.sh`** —— 分段改造**之前**的旧入口，已经坏了：
   它第 ② 步调 `run_all.py --force --out-dir=... <表>` 而不带 `--source`，会直接打印用法退出；
   它的检索词还写死 `reviewed:true`。**没有去补它**，因为补了等于暗示它还能用。
 - **`update_tool/fetch_inchikey.py`** —— 不接任何流程。它产出 6 列并**原地覆盖**
   `for_graph/all_nodes.tsv`（现表是 3 列），且绕过 `update_database.py` 的备份。
-  已改成必须显式给 `--input=` / `--output=` 才运行。
+  功能已由 `build_all_nodes.py` 的 `_allnodes_inchikey.json` 缓存承担。
 
 ### H. 修改工具代码时
 
@@ -407,7 +409,7 @@ igem_database/
 │   └── .env                        #   数据库密码（不提交 git）
 ├── frontend/                       # React + Vite 前端
 ├── for_enzyme_detail/              # 落盘的 TSV（分段带 .<source> 后缀）
-├── for_enzyme_reation_card/
+├── for_enzyme_reaction_card/
 ├── for_compound_card/
 └── for_graph/
 ```
