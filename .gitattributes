@@ -1,0 +1,12 @@
+# Git LFS —— 只用于超过 GitHub 单文件 100MB 硬限的文件。
+#
+# for_enzyme_detail/uniprotkb_master.trembl.tsv 是 192MB（TrEMBL 的酶总表:
+# 每个酶一行、所有子表横向铺开, 951 列）。它是 etl_master / etl_search_index
+# 的必需输入, 而 etl/sources.py 的 read_segmented 缺任何一个分段都会硬报错,
+# 所以不能像其他产物那样一省了事 —— 只能走 LFS。
+#
+# 其余 21 个 for_* 分段文件都在 100MB 以内, 故意**不**走 LFS: 它们留在普通 git
+# 对象库里, 没有装 git-lfs 的人克隆时也能直接拿到。
+#
+# 克隆后需要: git lfs install && git lfs pull
+for_enzyme_detail/uniprotkb_master.trembl.tsv filter=lfs diff=lfs merge=lfs -text

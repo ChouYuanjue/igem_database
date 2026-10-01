@@ -69,13 +69,17 @@ Thumbs.db
 /update_tool/_deploy_backup/
 /update_tool/_*.md5
 /update_tool/_emoji_scan.txt
-# update_database.py 的落盘：分段表带来源后缀, 汇合表不带。
-# 只有 3 张汇合表（terpene_pairs / terpene_compounds / all_nodes）是仓库跟踪的,
-# 其余带后缀的全是流水线产物。注意上面的目录都在 update_tool/ 下。
-/for_*/*.swiss_prot.tsv
-/for_*/*.trembl.tsv
-/for_*/*/*.swiss_prot.tsv
-/for_*/*/*.trembl.tsv
+# update_database.py 的落盘：11 张表**按来源分段**（<name>.<source>.tsv）,
+# 只有跨条目聚合的 3 张（terpene_pairs / terpene_compounds / all_nodes）无后缀。
+#
+# **这 22 个分段文件必须跟踪。** etl/sources.py 的 read_segmented 是 ETL 读 for_* 的
+# 唯一入口, 它只认带后缀的文件; 缺任何一个都直接抛 FileNotFoundError 拒绝继续
+# （故意不静默跳过 —— 少读一个来源就是静默丢数据）。所以 for_* 不是「流水线产物,
+# 可以重生成」这么简单: 不跟踪它们, 仓库就只是一个「必须先把 update_tool 跑完
+# 才能用」的半成品。
+#
+# 例外一个: for_enzyme_detail/uniprotkb_master.trembl.tsv 是 192MB, 超 GitHub
+# 100MB 硬限, 走 Git LFS —— 见仓库根的 .gitattributes。
 # download_uniprot.py --out= 的单来源产物落在仓库根目录
 /uniprotkb_terpene_parsed.*.tsv
 # 探针脚本的临时快照（阈值/基线 JSON），不是代码
