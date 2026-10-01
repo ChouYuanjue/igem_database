@@ -108,7 +108,7 @@ from the disk figures in §3.1. We have since pruned it; this section records wh
 | `st_600.json`, `st_2000.json` | 2 | untracked | Captures of the same kind, written later. |
 | `_db_backup/`, `_dbbackup/`, `_pre_merge_backup_<timestamp>/` | — | untracked | Database dumps, **~1.2 GB combined** |
 | `_mysql_move.log`, `mysqldata_copy.log` | — | untracked | Logs from the MySQL directory move |
-| `uniprotkb_terpene_parsed.{swiss_prot,trembl}.tsv` | 2 | untracked | The **raw UniProt downloads**. Not read by the ETL — the ETL reads `for_*/` only. |
+| `uniprotkb_terpene_parsed.{swiss_prot,trembl}.tsv` | 2 | untracked | The **parsed intermediate** written by `update_tool/parse_names.py` (1,536 + 94,335 rows) — not the raw download. The **runtime** ETL does not read them (it reads `for_*/` only), but `update_tool/build_names_split.py` does take them as its input, so they sit on the re-build chain rather than the serving path. Both are byte-identical duplicates of `update_tool/_src/{swiss_prot,trembl}/output_parsed.tsv`. The download they were parsed from (`uniprotkb_terpene_AND_reviewed_true_2026_07_10.tsv`) is no longer on this machine. |
 | `icon.png` | 1 | untracked | Site icon |
 
 `update_tool/` keeps its own working directories — `_src/` (staging), `_merged/` (merge staging),

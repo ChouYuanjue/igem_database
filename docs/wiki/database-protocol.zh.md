@@ -100,7 +100,7 @@
 | `st_600.json`、`st_2000.json` | 2 | 未跟踪 | 同类抓取,时间更晚。 |
 | `_db_backup/`、`_dbbackup/`、`_pre_merge_backup_<时间戳>/` | — | 未跟踪 | 数据库转储,**合计约 1.2 GB** |
 | `_mysql_move.log`、`mysqldata_copy.log` | — | 未跟踪 | MySQL 目录搬移的日志 |
-| `uniprotkb_terpene_parsed.{swiss_prot,trembl}.tsv` | 2 | 未跟踪 | **UniProt 原始下载文件**。ETL **不读**它们——ETL 只读 `for_*/`。 |
+| `uniprotkb_terpene_parsed.{swiss_prot,trembl}.tsv` | 2 | 未跟踪 | `update_tool/parse_names.py` 写出的**解析中间件**(1536 + 94335 行),不是原始下载。**运行时** ETL 不读它们(只读 `for_*/`),但 `update_tool/build_names_split.py` 把它们当输入,所以它们属于**重建链**而不是服务路径。两份都与 `update_tool/_src/{swiss_prot,trembl}/output_parsed.tsv` 逐字节相同。它们解析自的那个原始下载(`uniprotkb_terpene_AND_reviewed_true_2026_07_10.tsv`)在本机已经没有了。 |
 | `icon.png` | 1 | 未跟踪 | 站点图标 |
 
 `update_tool/` 下还有自己的几个工作目录——`_src/`(暂存)、`_merged/`(合并暂存)、`_sandbox/`
