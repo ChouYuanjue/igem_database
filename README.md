@@ -342,12 +342,17 @@ cd etl && python -u etl_run.py --source=trembl
 
 ## 验证
 
-我们开发时用一组**只读探针**（不写库、不改文件）守着管线，改动后按需跑。
-**它们不在本仓库里** —— 每个都要连上本机的 `igem_terpene` 库和 `for_*/` 才能跑，
-路径写死在开发机上。下表说明每个探针验的是什么，方便你自己写一个：
+我们开发时用一组探针脚本守着管线，改动后按需跑。它们**不在本仓库里**（也**已从工作区删除**，
+见 [`docs/wiki/database-protocol.md`](docs/wiki/database-protocol.md) §2.3）—— 每个都要连上本机的
+`igem_terpene` 库和 `for_*/` 才能跑，路径写死在开发机上。下表说明每个探针验的是什么，
+方便你自己写一个：
 
 > 命名约定：打印耗时、累积 `failures` 列表、非零退出、末尾打印 `ALL CHECKS PASSED`。
 > Windows 控制台是 GBK，跑之前设 `PYTHONIOENCODING=utf-8`。
+
+> **别把它们想成「只读」**：绝大多数确实只查不写，但有两个改过库 —— 一个对 `search_index`
+> 跑 `ALTER TABLE ... ADD INDEX`（就是 §1 里那个前缀索引），另一个清空过
+> `performance_schema` 的监控表。自己写探针时，写库语句要单独拎出来、别混进顺手跑的脚本里。
 
 | 检查项 | 验什么 |
 |---|---|
@@ -410,7 +415,7 @@ igem_database/
 下面这些**不在仓库里**，是本机跑起来才会出现的（全都在 `.gitignore` 里）：
 `backend/.env`（数据库密码）、`backend/blast_bin/` 与 `backend/blast_work/`（§3.4）、
 `update_tool/_src/` 与 `_merged/`（中间产物）、`_db_backup/`（mysqldump 备份）、
-以及开发时那组只读验证探针（见上）。
+以及开发时那组验证探针（**已删**，见上）。
 
 `update_tool/` 的隔离原则：**只读**原始目录与 `chebi_data/`，全部输出写到自己的目录。
 **绝对不要修改原始文件夹里的任何文件。**

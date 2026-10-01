@@ -92,31 +92,33 @@ reads. Within each, a file suffixed `.<source>.tsv` is a per-source segment and 
 
 ### 2.3 Development artifacts
 
-Everything below was used to *build and validate* the database. **None of it is needed to run the
-pipeline or the web app**, and it is excluded from the disk figures in §3.1.
+While building this database we kept a set of throwaway scripts, and the measurements they produced,
+at the repo root. **None of it is needed to run the pipeline or the web app**, and it is excluded
+from the disk figures in §3.1. We have since pruned it; this section records what was there.
 
-**None of it is in this repository either.** This is a record of what our working tree holds, not a
-listing of the tracked files — every group below is covered by `.gitignore`. We keep it because the
-measurements quoted in this page came out of these scripts, and readers deserve to know what they
-were, even where we do not ship them.
+**Almost none of it was ever in this repository.** The three rules that kept it out (`/_*.py`,
+`/_*.ps1`, `/_*.json`) are still in `.gitignore`. The exceptions are called out in the table.
 
-| Group | Count | What it is |
-|---|---|---|
-| `_*.py` at the repo root | 24 | Throwaway probe and measurement scripts written while debugging — A/B captures, index and prefix checks, ETL seam probes, graph and search-set probes, performance runs. Nothing imports them. |
-| `_*.json` at the repo root | 9 | The measurement snapshots those probes wrote (before/after pairs, buffer-pool comparisons). |
-| `_*.ps1` at the repo root | 4 | **MySQL setup scripts** — `_move_mysql_datadir.ps1`, `_mysql_tmpdir.ps1`, `_mysql_buffer_pool.ps1`, `_drop_old_datadir.ps1`. The one group that is operationally relevant rather than throwaway — they were step 0 of §9 on our machine. They are still not in the repo: they hard-code that machine's drive letters, its MySQL install path and its service name, and `_drop_old_datadir.ps1` deletes a data directory irreversibly. §9 now spells the three operations out in full and needs nothing from this group. |
-| `_db_backup/`, `_dbbackup/`, `_pre_merge_backup_<timestamp>/` | — | Database dumps, **~1.2 GB combined** |
-| `_mysql_move.log`, `mysqldata_copy.log` | — | Logs from the MySQL directory move |
-| `ge60.json`, `graph_full.json`, `group_edges.json`, `st_600.json`, `st_2000.json` | 5 | More measurement output (these simply lack the leading underscore) |
-| `uniprotkb_terpene_parsed.{swiss_prot,trembl}.tsv` | 2 | The **raw UniProt downloads**. Not read by the ETL — the ETL reads `for_*/` only. |
-| `icon.png` | 1 | Site icon |
+| Group | Count | Status | What it was |
+|---|---|---|---|
+| `_*.py` at the repo root | 24 | *deleted 2026-10-02* | Probe and measurement scripts. Nothing imported them — but "read-only" would be the wrong description: `_pfx.py` ran an `ALTER TABLE ... ADD INDEX` against `search_index` (the same index `sql/schema.sql` creates), `_perf3.py` truncated a `performance_schema` monitoring table, and five of them wrote the JSON snapshots below. |
+| `_*.json` at the repo root | 9 | *deleted 2026-10-02* | Measurement snapshots those probes wrote — A/B payload pairs, buffer-pool comparisons. |
+| `_*.ps1` at the repo root | 4 | *deleted 2026-10-02* | One-time MySQL setup — move `datadir`, set `tmpdir`, persist the buffer pool, drop the stale pre-move datadir. Each hard-coded the drive letters, install path and service name of the machine it ran on. All four had already been applied there; §3.2 and §9 spell the same operations out as steps, so nothing depends on the scripts. |
+| **`ge60.json`, `graph_full.json`, `group_edges.json`** | 3 | **tracked in this repository** | Graph payload captures, **~350 KB total**. These three *are* committed — they arrived with an early whole-workspace sync commit rather than as a deliberate choice, and they are the only files in this section a reader will actually find in a clone. |
+| `st_600.json`, `st_2000.json` | 2 | untracked | Captures of the same kind, written later. |
+| `_db_backup/`, `_dbbackup/`, `_pre_merge_backup_<timestamp>/` | — | untracked | Database dumps, **~1.2 GB combined** |
+| `_mysql_move.log`, `mysqldata_copy.log` | — | untracked | Logs from the MySQL directory move |
+| `uniprotkb_terpene_parsed.{swiss_prot,trembl}.tsv` | 2 | untracked | The **raw UniProt downloads**. Not read by the ETL — the ETL reads `for_*/` only. |
+| `icon.png` | 1 | untracked | Site icon |
 
 `update_tool/` keeps its own working directories — `_src/` (staging), `_merged/` (merge staging),
 `_sandbox/` (the sandbox tree used by `IGEM_DATA_DIR`, §3.5), `_t/`, `_deploy_backup/` — plus
 `chebi_data/` (including `curation_overrides.tsv`) and `child_tables/`.
 
-We have left these in place on our machine rather than pruning them: the probes and the outputs they
-captured are how we validated the pipeline. They are not part of what we publish.
+The measurements quoted throughout this page came out of the scripts in the first three groups. Now
+that those are gone, the figures are a record of one machine at one time; the ones derived from a
+live database (§3.1) can be reproduced by querying it, but the A/B comparisons cannot be re-run as
+they were.
 
 ---
 
