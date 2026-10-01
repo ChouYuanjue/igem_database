@@ -6,7 +6,6 @@ import {
   Download,
   ExternalLink,
   Loader2,
-  Network,
   Route,
   Search,
   X,
@@ -386,7 +385,7 @@ export function DownloadsPage({
           aria-label="Starase Atlas home"
         >
           <span className="atlas-logo">
-            <Network size={18} />
+            <img className="atlas-logo-mark" src="/starase-atlas-logo.png" alt="" />
           </span>
           <span>Starase Atlas</span>
         </button>
@@ -769,12 +768,12 @@ export function DownloadsPage({
                             {meta.stepCount} step{meta.stepCount === 1 ? '' : 's'} · {meta.compoundIds.length} compound
                             {meta.compoundIds.length === 1 ? '' : 's'}
                             {hasEnzymes ? (
-                              <span className="downloads-pw-route-badge" title="已为每步选定具体酶">
-                                已选酶
+                              <span className="downloads-pw-route-badge" title="A specific enzyme is picked for every step">
+                                Enzymes picked
                               </span>
                             ) : (
-                              <span className="downloads-pw-route-badge is-auto" title="未逐步选酶，导出时自动使用数据库里能催化该步的全部酶">
-                                自动选酶
+                              <span className="downloads-pw-route-badge is-auto" title="No per-step picks; the export uses every enzyme in the database that can catalyse that step">
+                                Auto
                               </span>
                             )}
                           </span>
@@ -794,7 +793,7 @@ export function DownloadsPage({
                                   </span>
                                   <span className="downloads-pw-enzyme-row">
                                     {step.enzymes.length === 0 ? (
-                                      <span className="downloads-pw-enzyme-missing">(该步无已选酶)</span>
+                                      <span className="downloads-pw-enzyme-missing">(no enzyme picked for this step)</span>
                                     ) : (
                                       step.enzymes.map((enzyme) => (
                                         <span
@@ -804,6 +803,11 @@ export function DownloadsPage({
                                         >
                                           {enzyme.name}
                                           {enzyme.organismName ? <em>{enzyme.organismName}</em> : null}
+                                          {/* 分数来自 `dedupeEnzymeChoices` 抄下来的 card 字段；
+                                              导出时的真实数值由后端按 enzymeId 从库里取。 */}
+                                          {enzyme.deepSolnetScore != null ? (
+                                            <em>DeepSolNet Score {enzyme.deepSolnetScore.toFixed(3)}{enzyme.membrane === 'membrane' ? ' · membrane' : ''}</em>
+                                          ) : null}
                                         </span>
                                       ))
                                     )}

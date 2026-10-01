@@ -2658,6 +2658,9 @@ body:has(.graph-home-page) {
   display: grid;
   place-items: center;
   border: 1px solid rgba(146, 166, 202, 0.6);
+  /* 里面是真正的 logo（`/starase-atlas-logo.png`）。曾试过垫一层浅底（`#fff8f1`）
+     来提对比度，但配色上不如原来这层冷蓝薄雾好看，已按你的意思改回来。
+     `home-rework.css` 里的 `.atlas-logo-mark` 负责把图案内缩 3px，别贴着这圈描边。 */
   background: rgba(146, 166, 202, 0.18);
   color: #92a6ca;
 }
@@ -5417,9 +5420,19 @@ body:has(.home-map-page) {
   line-height: 1.55;
 }
 
-.pathway-heading strong,
+/* 标题栏所在的卡片是**浅色**面板（`.pathway-result-card`：
+   `rgba(255,255,255,0.82)` 半透白 + `backdrop-filter`），而这里原来用的是深色面板
+   才该用的暖白 `#fff8f1` —— 白字写白底，实测对比度约 1.02:1，等于看不见。
+   `graphExperience.tsx:2678` 是 `.pathway-heading` 目前唯一的渲染点，
+   所以直接改在这里，不留一条被别处覆盖掉的死规则。
+   主标题用正文墨色、副行（`N routes · <查询词>`）用次级灰，与 `.home-map-page
+   .stack-heading` 的 `color: #0e1726` 及 `.pathway-row-meta` 的收法保持一致。 */
+.pathway-heading strong {
+  color: #0e1726;
+}
+
 .pathway-heading span {
-  color: #fff8f1;
+  color: rgba(14, 23, 38, 0.62);
 }
 
 .pathway-route-list {
@@ -6579,11 +6592,20 @@ body:has(.home-map-page) {
   position: absolute;
 }
 
+/* The nav hosts dropdown popovers (the search-set control) that hang *below* the
+   58px band, i.e. over the page body. So the nav's z-index has to clear every
+   body container it can overhang, not just sit above the background: at 10 the
+   whole subtree — popovers included — was painted under `.search-table-filter`
+   (z-index 12, later in the DOM), which silently ate the top of the search-set
+   popover on the table results page. Any z-index on the popover itself is
+   powerless here: it is trapped inside the nav's stacking context.
+   13 clears that toolbar and still stays under `.home-map-page .floating-menu`
+   (14), which is meant to float above the nav. */
 .graph-top-nav {
   left: 0;
   right: 0;
   top: 0;
-  z-index: 10;
+  z-index: 13;
   height: 58px;
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(360px, 460px) minmax(300px, 1fr);
@@ -7280,6 +7302,36 @@ body:has(.home-map-page) {
   overflow-wrap: anywhere;
 }
 
+/* 标题栏回到普通流。它原本是绝对定位（`app.css:3626` / `:3981`），高度靠面板的
+   `padding-top` 写死预留 —— 所以化合物名一折行、预留量就不够，标题会被下面第一张卡
+   或第一条路线**压住**（截图确认）。回到文档流后标题自己撑多高就占多高，与内容不再重叠。
+   拖动仍然可用：`map-panel-drag-handle` 的指针事件不依赖定位方式。 */
+.home-map-page .stack-heading {
+  position: static;
+}
+
+/* 标题里的 `<div>` 是 flex 项，不给 min-width:0 的话它的最小宽度是「最长不可断词」，
+   会把整行顶出卡片。 */
+.home-map-page .stack-heading > div {
+  min-width: 0;
+}
+
+/* 标题正文是 `inline-flex`（`app.css:3638`：文字 + ChevronRight 图标）。不让它 wrap 的话
+   「起点 → 终点」永远挤在一行里；再叠上 `overflow-wrap: anywhere`（它把 min-content 宽度
+   压到 1 个字符），flex 就会把终点名从**单词中间**劈开（截图里出现过 `squale|ne`）。
+   这里改成：允许整块换行，只在单个词实在放不下时才断。 */
+.home-map-page .stack-heading strong {
+  flex-wrap: wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* 「N enzymes · M shown · K edges」/「N routes · <查询词>」这两行：按空格换行即可。 */
+.home-map-page .stack-heading span {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
 .home-map-page .popover-heading-actions {
   display: inline-flex;
   align-items: center;
@@ -7387,7 +7439,9 @@ body:has(.home-map-page) {
   left: auto;
   right: 24px;
   width: min(430px, calc(100vw - 210px));
-  padding: 52px 14px 14px;
+  /* 标题栏已经是普通流（见下面的 `.home-map-page .stack-heading`），
+     这里不再需要为它预留 52px —— 预留量写死，化合物名一折行就不够。 */
+  padding: 14px;
 }
 
 .home-map-page .enzyme-card {
@@ -7414,8 +7468,10 @@ body:has(.home-map-page) {
 
 .home-map-page .enzyme-card-copy h3,
 .home-map-page .enzyme-card-copy p,
+.home-map-page .enzyme-card-copy > span,
 .home-map-page .enzyme-card-meta strong,
-.home-map-page .enzyme-card-meta small {
+.home-map-page .enzyme-card-meta small,
+.home-map-page .enzyme-card-meta > span {
   overflow-wrap: anywhere;
   word-break: break-word;
 }

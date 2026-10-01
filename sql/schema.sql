@@ -176,6 +176,30 @@ CREATE TABLE IF NOT EXISTS enzyme_isoform (
         FOREIGN KEY (enzyme_id) REFERENCES enzyme(enzyme_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 每酶的模型参考分 + 膜注释。粒度: isoform_id IS NULL 的行为 canonical 序列的分,
+-- isoform_id 非空的行为该变体自己的分。
+--
+-- 为什么独立成表: 序列是共享的(没有同序列不同分的真变体),
+-- 放在 enzyme 上会让热表为一次模型重跑而改动。
+--
+-- evidence 列宽 1024 是量出来的: Membrane Evidence 实测最长 530 字符
+-- (18,616 行非空), 照抄 enzyme_go.go_term 的 500 会截断。
+-- deep_solnet_score DECIMAL(7,6): 实测最长 8 字符、6 位小数, 刚好不丢精度。
+CREATE TABLE IF NOT EXISTS enzyme_solubility_score (
+    solubility_record_id INT AUTO_INCREMENT PRIMARY KEY,
+    enzyme_id VARCHAR(20) NOT NULL,
+    isoform_id VARCHAR(80),
+    deep_solnet_score DECIMAL(7,6),
+    membrane VARCHAR(20),
+    membrane_evidence VARCHAR(1024),
+    sequence_length INT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_enzyme_solubility_score_enzyme (enzyme_id),
+    INDEX idx_enzyme_solubility_score_value (deep_solnet_score),
+    CONSTRAINT fk_enzyme_solubility_score_enzyme
+        FOREIGN KEY (enzyme_id) REFERENCES enzyme(enzyme_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS pathway_cache (
     cache_id INT AUTO_INCREMENT PRIMARY KEY,
     start_compound_id VARCHAR(30) NOT NULL,

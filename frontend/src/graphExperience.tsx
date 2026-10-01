@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   ArrowLeft,
+  ArrowLeftRight,
   ArrowUpRight,
   Check,
   ChevronDown,
   ChevronRight,
   ChevronsUp,
+  CircleHelp,
   Dna,
   Download,
   ExternalLink,
   Layers,
   Link2,
   Loader2,
-  Network,
   Plus,
   Route,
   Search,
@@ -48,17 +49,65 @@ import { StructureSearchDrawer } from './components/StructureSearchDrawer'
 import { fileNameFromUrl, saveFile } from './lib/saveFile'
 import { sourceLabel, sourceOptionsFromUnits } from './lib/sourceLabels'
 import type { Entity, EntityKind, PathwayEnzymeChoice, PathwayQueueStep } from './types'
+import type { MapSearchRoute } from './lib/routes'
 
 const HOME_EXPANSION_LIMIT = 36
 const HOME_VIEWBOX_WIDTH = 100
 const HOME_VIEWBOX_HEIGHT = 118
-const HOME_LAYOUT_WIDTH = HOME_VIEWBOX_WIDTH * 2.8
-const HOME_LAYOUT_HEIGHT = HOME_VIEWBOX_HEIGHT * 2.8
-const HOME_LAYOUT_MIN_X = (HOME_VIEWBOX_WIDTH - HOME_LAYOUT_WIDTH) / 2
-const HOME_LAYOUT_MIN_Y = (HOME_VIEWBOX_HEIGHT - HOME_LAYOUT_HEIGHT) / 2
-const HOME_LAYOUT_MAX_X = HOME_LAYOUT_MIN_X + HOME_LAYOUT_WIDTH
-const HOME_LAYOUT_MAX_Y = HOME_LAYOUT_MIN_Y + HOME_LAYOUT_HEIGHT
+const HOME_LAYOUT_BASE_SCALE = 4
 const HOME_LAYOUT_MARGIN = 12
+const HOME_LAYOUT_REFERENCE_COUNT = 120
+
+/** The box the laid-out map fills, sized to hold `nodeCount` compounds at a constant
+ * density.
+ *
+ * Area is what buys separation: hex packing puts the densest uniform gap at
+ * sqrt(area / (n * sqrt(3)/2)), so scaling both sides by sqrt(n / reference) holds
+ * that gap steady instead of letting it collapse as the map grows. At the usual ~120
+ * compounds the factor is exactly 1, so that map is byte-for-byte what it always was;
+ * at the whole ~730-compound graph it is 2.47x.
+ *
+ * Growing the box does not shrink the drawing. Nothing fits the box to the viewport:
+ * the box maps to the screen at a fixed scale (zoomScale 1 by default), so a larger
+ * box simply means a larger, pannable canvas. That is already how the map works — the
+ * box is 2.8x the viewBox — and it is why the pan and zoom controls earn their place.
+ *
+ * Measured at 730 compounds against the un-grown box: gaps hold at 13.51 instead of
+ * being forced down to 5.67, and edge crossings drop 22518 -> 17025, because the force
+ * pass finally has room to untangle instead of packing everything against the clamp.
+ *
+ * At 300 compounds the base scale is the one lever here that moves crossings
+ * MONOTONICALLY, which is why it is the one worth turning. Measured, with every other
+ * constant held:
+ *
+ *   base scale   2.8    3.5    4.0    5.0    6.0    8.0
+ *   crossings    174    140    117     93     91     78
+ *
+ * The same sweep over the force constants is NOT monotone and must not be tuned by
+ * eye: at 300 compounds, crossings by HOME_FORCE_ITERATIONS are 174 at 520, 135 at
+ * 900, then back up to 178 at 1500, and 183 with damping 0.8. Those are local minima
+ * of a chaotic landscape, not improvements — 900 in particular is a lucky draw, so it
+ * was left at 520. Compare that with this lever, where six settings in a row move the
+ * same way.
+ *
+ * The price of a bigger box is that fewer compounds fit in one screenful, because the
+ * viewBox and the zoom are fixed while the box grows: at 300 compounds the default
+ * view holds 40 compounds at 2.8 and 25 at 4.0. That is a real cost and it is the
+ * reason this stops at 4.0 rather than continuing down the curve — the user can zoom
+ * out (0.6x is allowed) to trade back the other way whenever they want. */
+function homeLayoutBoxFor(nodeCount: number) {
+  const scale = HOME_LAYOUT_BASE_SCALE * Math.max(1, Math.sqrt(Math.max(nodeCount, 1) / HOME_LAYOUT_REFERENCE_COUNT))
+  const width = HOME_VIEWBOX_WIDTH * scale
+  const height = HOME_VIEWBOX_HEIGHT * scale
+  return {
+    width,
+    height,
+    minX: (HOME_VIEWBOX_WIDTH - width) / 2,
+    minY: (HOME_VIEWBOX_HEIGHT - height) / 2,
+    maxX: (HOME_VIEWBOX_WIDTH + width) / 2,
+    maxY: (HOME_VIEWBOX_HEIGHT + height) / 2,
+  }
+}
 const HOME_IMPORTANT_LABEL_COUNT = 10
 const HOME_FORCE_ITERATIONS = 520
 const HOME_FORCE_REPULSION = 246
@@ -68,9 +117,89 @@ const HOME_FORCE_CENTERING = 0.00028
 const HOME_FORCE_DAMPING = 0.68
 const HOME_FORCE_COLLISION_DISTANCE = 21.6
 const HOME_FORCE_COLLISION_STRENGTH = 0.5
-const HOME_FINAL_COLLISION_DISTANCE = 21.6
+
+/* How much room a pair of compounds gets, graded by how far apart they are IN THE
+ * GRAPH rather than by whether a single line joins them.
+ *
+ * The earlier cut was binary — "has a line" vs "has none" — and it measured badly:
+ * widening the no-line half raised crossings 150 -> 570 at a berth of 24, because
+ * 99.4% of pairs have no line, so widening them widens the whole map and drags
+ * every real edge along. The graph's own structure says why that was the wrong
+ * unit. On the 300-compound map there are 48 connected components: one big one of
+ * 170 compounds (56.7%) and 47 islands of 10, 8, 6, 4... 67.6% of all pairs, and
+ * 44% of the pairs that sit closer than 20 units, are in DIFFERENT components.
+ * Distance tells those two cases apart where "has a line" could not.
+ *
+ * NO SEPARATION HERE IS FREE. An earlier draft of this comment claimed the
+ * cross-component berth cost nothing because no edge spans two islands. That is
+ * only half true, and the half it gets wrong is the one that matters: the layout
+ * box is a fixed size for a given node count (homeLayoutBoxFor(size) depends on
+ * nothing else), so AREA IS CONSERVED. Every unit of separation handed to two
+ * compounds is a unit taken from every other pair. Measured, islands at a berth of
+ * 24 grow their bounding box 51% (73k -> 111k sq units of a ~197k canvas) and the
+ * big component pays for it — so pushing the islands apart still costs crossings
+ * even though it stretches no edge.
+ *
+ * That is why the berths below are FLAT: grading inside a component was implemented
+ * and measured, and it loses. Hop-2 pairs 14 -> 17 and hop-3+ 14 -> 20 stretch that
+ * component's own real edges (its mean edge length 32.8 -> 40.9, +25%, in a box
+ * that did not grow) and it buys 12 fewer label clashes for 37 more crossings.
+ * Neighbours also keep the old 14 on their own merits: they are meant to be close,
+ * and the line explains why they are.
+ *
+ * The cross-component berth has to stay near the packing limit for the box — at 300
+ * compounds sqrt(area / (n * sqrt(3)/2)) is ~27.5, and past it nothing improves:
+ * 30 costs 200 crossings to save 11 clashes. Measured on the live 300-compound map at
+ * the old x2.8 base scale:
+ *
+ *   variant            crossings  label clashes  cross-component pairs under 20
+ *   flat 14              150        140           263
+ *   islands only, 24     174         86             0
+ *   binary cut, 18       210         74           (n/a)
+ *   islands + hops, 24   211         74             0
+ *
+ * Islands-only 24 beats the binary cut on clashes (86 vs 91) and reaches a structural
+ * guarantee the binary cut cannot state: no two compounds from different islands are
+ * closer than 20 — the nearest such pair in the whole map is 23.86 apart — which is
+ * what makes the map read as one dense cluster plus scattered islands.
+ *
+ * AT THE ADOPTED x4 BASE SCALE THE BERTH NO LONGER BINDS, and that is the point. With
+ * room to spare, berth 14 and berth 24 produce byte-identical results (117 crossings,
+ * 62 clashes, 0 cross-component pairs under 20) — the islands end up further apart
+ * than 24 on their own, so the push never fires and the structural guarantee comes for
+ * free instead of being paid for out of the big component's area. That is exactly the
+ * trade the comment above warns about, resolved by giving the map more room rather
+ * than by tuning the berth: the crossings this berth used to cost at x2.8 (150 -> 174)
+ * are gone. It is kept at 24 rather than lowered because at 24 it is demonstrably
+ * inert, and it still does its job on any node count where the box is tighter. */
+const HOME_HOP_BERTH = [14, 14, 14, 14] as const
+const HOME_HOP_CROSS_COMPONENT = 24
+/** Marks a pair whose compounds are in different connected components. */
+const HOME_HOP_SENTINEL = 255
+/* Separation the final pass aims for, as drawn.
+ *
+ * The box is the 100x118 viewBox at the layout scale, less the 12 margin. The default
+ * home map paints 300 compounds with 291 edges (api.ts defaults limit_nodes to 300
+ * when there is no centre compound), and hex packing puts the densest uniform gap at
+ * sqrt(area / (n * sqrt(3)/2)); at the old x2.8 base that was ~27.5, so both 21.6 and
+ * 14 were reachable — measured live, the pass lands on 14.00 exactly, i.e. it
+ * converges rather than thrashing. The x4 base raises that limit to ~39, so there is
+ * more slack than before, not less. (The figures once quoted here — 120 compounds,
+ * 164 edges, 71 crossings — were measured under an older limit_nodes default and no
+ * longer describe the home page; only the 120 of HOME_LAYOUT_REFERENCE_COUNT is
+ * still 120, and that is the layout reference, not a node count.)
+ *
+ * The reason to prefer the smaller target is edge length. Asking for 21.6 makes
+ * the pass spread the map out to fill the box, which pushes neighbours apart and
+ * drags edges across unrelated parts of the graph: measured on the live page,
+ * 21.6 gives 129 edge crossings and 5824 units of edge length, versus 71 crossings
+ * and 3841 units at 14. Same seed, same node set, same determinism.
+ *
+ * This target holds at every size because homeLayoutBoxFor grows the box with the
+ * compound count: the packing limit stays near 27.5 instead of falling to 11.1 once
+ * the whole graph is drawn, so the pass always has room to settle on 14. */
+const HOME_FINAL_COLLISION_DISTANCE = 14
 const HOME_FINAL_COLLISION_ITERATIONS = 420
-const HOME_GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 const homeSearchFilters = [
   { id: 'all', label: 'All' },
   { id: 'compound', label: 'Compounds' },
@@ -82,6 +211,45 @@ type HomeSearchFilter = (typeof homeSearchFilters)[number]['id']
 type HomeActiveFilters = {
   species: string[]
   sourceTypes: string[]
+  /** 模型参考分阈值，0 = 不过滤。**只作用于「非膜蛋白」这一档**，膜蛋白豁免。 */
+  minScore: number
+  /** 「膜蛋白」档。与 `showNonMembrane` 是**平级的两个兄弟**，互不隶属，默认都亮。 */
+  showMembrane: boolean
+  /** 「非膜蛋白」档 = `'non-membrane'` **加上** `'unannotated'`。分数滑块是它的下级：
+   *  这一档不亮时滑块没有作用对象，置灰。 */
+  showNonMembrane: boolean
+}
+
+/** 膜蛋白标记值。**只有它豁免分数阈值** —— 它和「非膜蛋白」是平级的两档，
+ *  滑块挂在后者下面，所以滑块永远藏不掉一个膜蛋白。 */
+const MEMBRANE_VALUE = 'membrane'
+
+/** 模型参考分 chip。分数为空就不渲染。
+ *
+ *  膜蛋白在文案里带 `· membrane` —— 卡片上要解释的正是「它为什么没被阈值筛掉」，
+ *  否则用户会以为过滤器坏了。`'non-membrane'` / `'unannotated'` 不出标记：
+ *  前者只有 1,262 条、标记没信息量，后者占八成、标上去只是噪声。 */
+function EnzymeScoreChip({ score, membrane }: { score?: number | null; membrane?: string | null }) {
+  if (score == null) return null
+  const isMembrane = membrane === MEMBRANE_VALUE
+  return (
+    <span
+      className="enzyme-card-score-chip"
+      title="DeepSolNet model reference score — not a solubility label"
+    >
+      DeepSolNet Score {score.toFixed(3)}{isMembrane ? ' · membrane' : ''}
+    </span>
+  )
+}
+
+/** 膜三态的显示文案。`'unannotated'` 不是 `'non-membrane'` —— 前者是没注释（八成），
+ *  后者是明确非膜。两者都受分数阈值约束，只有 `'membrane'` 豁免，所以豁免那句
+ *  只挂在 membrane 上。 */
+function membraneLabel(membrane?: string | null) {
+  if (membrane === MEMBRANE_VALUE) return 'Membrane — exempt from the score filter'
+  if (membrane === 'non-membrane') return 'Non-membrane'
+  if (membrane === 'unannotated') return 'Unannotated'
+  return 'n/a'
 }
 
 
@@ -92,14 +260,27 @@ function formatScopeEValue(value: number): string {
 type Point = { x: number; y: number }
 
 type PairEntry = {
+  /** **无向**（`canonicalCompoundPairKey`）—— 同一对化合物只留一条。 */
   key: string
+  /** 主导方向的端点（确定性选取，见 `buildHomePairs`）：箭头、卡片标题都跟它一致。 */
   sourceId: string
   targetId: string
   label: string
   count: number
+  /** 这一对端点上**不同的酶**个数 —— 地图那行 `enzyme*N` 要的就是它。
+   *  `count` 是记录数：同一个酶用两条反应催化同一对化合物时，后端给两条记录，
+   *  于是 `count=2` 而酶只有 1 个（全库 175 个组里 11 个如此；最大的一组
+   *  FPP↔squalene 是 7093 vs 3595）。 */
+  enzymeCount: number
+  /** = `edgeGroupIds[0] ?? null`，保留给「只关心主导方向」的调用点。 */
   edgeGroupId?: string | null
+  /** 折叠进来的全部 group，主导方向在前；非复合边为 `[]`。 */
+  edgeGroupIds: string[]
   edgeIds: string[]
   edges: HomeGraphEdge[]
+  /** 被折掉的另一个方向的端点；这对化合物只有一个方向有记录时为 `null`。 */
+  reverseSourceId?: string | null
+  reverseTargetId?: string | null
 }
 
 type NodeCard = HomeGraphCompound & {
@@ -186,24 +367,62 @@ type GraphSearchMatch =
 /* ---------- Active-filter engine (organism + data source) ---------- */
 
 function homeFiltersActive(filters: HomeActiveFilters) {
+  // 两档默认都亮、阈值默认 0，所以「都亮 + 阈值 0」就是默认态，不算有筛选。
   return filters.species.length > 0 || filters.sourceTypes.length > 0
+    || filters.minScore > 0 || !filters.showMembrane || !filters.showNonMembrane
 }
 
 /** A single sub-edge (composite item or loaded edge) must pass every active dimension. */
-function homeUnitPasses(unit: { organismName?: string | null; sourceType?: string | null }, filters: HomeActiveFilters) {
+function homeUnitPasses(
+  unit: {
+    organismName?: string | null
+    sourceType?: string | null
+    deepSolnetScore?: number | null
+    membrane?: string | null
+  },
+  filters: HomeActiveFilters,
+) {
   if (filters.species.length > 0 && (!unit.organismName || !filters.species.includes(unit.organismName))) return false
   if (filters.sourceTypes.length > 0 && (!unit.sourceType || !filters.sourceTypes.includes(unit.sourceType))) return false
+
+  // 层级：膜蛋白 / 非膜蛋白 是平级两档；分数阈值是「非膜蛋白」的下级，只约束它。
+  const isMembrane = unit.membrane === MEMBRANE_VALUE
+  if (isMembrane) return filters.showMembrane
+  if (!filters.showNonMembrane) return false
+  // 非膜蛋白组 = 'non-membrane' + 'unannotated'。阈值只走到这里，走不到膜蛋白。
+  // 拿不到分的酶视为不达标 —— 全库目前每个酶都有分，但「没有数据」不能当成「通过」。
+  if (filters.minScore > 0) {
+    if (unit.deepSolnetScore == null || unit.deepSolnetScore < filters.minScore) return false
+  }
   return true
 }
 
 function homeEdgePasses(edge: HomeGraphEdge, filters: HomeActiveFilters) {
-  return homeUnitPasses({ organismName: edge.card?.organismName ?? null, sourceType: edge.sourceType ?? null }, filters)
+  return homeUnitPasses({
+    organismName: edge.card?.organismName ?? null,
+    sourceType: edge.sourceType ?? null,
+    deepSolnetScore: edge.card?.deepSolnetScore ?? null,
+    membrane: edge.card?.membrane ?? null,
+  }, filters)
 }
 
-/** Sub-edges that survive the active filters for a collapsed composite pair (group items first, loaded edges fallback). */
+/** Sub-edges that survive the active filters for a collapsed composite pair (group items first, loaded edges fallback).
+ *
+ * 折叠后的 pair 可能挂着两个方向的 group（正反各一条记录，见 `buildHomePairs`），
+ * 两个都要收 —— 只收 `edgeGroupIds[0]` 会让面板与计数漏掉另一个方向的酶。
+ * `edges[]` 只在**确实被折过**（`reverseSourceId` 非空）时才并入：单方向对里有 7 条
+ * `edges[]` 与自己的 group 共用 edgeId，无条件并入会改变它们的 `displayCount`。 */
 function homePairPassingUnits(pair: PairEntry, groupItemMap: Map<string, HomeGraphEdgeGroupItem[]>, filters: HomeActiveFilters): (HomeGraphEdgeGroupItem | HomeGraphEdge)[] {
-  const items = pair.edgeGroupId ? groupItemMap.get(pair.edgeGroupId) : undefined
-  if (items && items.length > 0) return items.filter((item) => homeUnitPasses(item, filters))
+  const units: (HomeGraphEdgeGroupItem | HomeGraphEdge)[] = []
+  const seen = new Set<string>()
+  const push = (unit: HomeGraphEdgeGroupItem | HomeGraphEdge) => {
+    if (seen.has(unit.edgeId)) return
+    seen.add(unit.edgeId)
+    units.push(unit)
+  }
+  pair.edgeGroupIds.forEach((groupId) => { (groupItemMap.get(groupId) ?? []).forEach(push) })
+  if (pair.reverseSourceId) pair.edges.forEach(push)
+  if (units.length > 0) return units.filter((unit) => homeUnitPasses(unit, filters))
   return pair.edges.filter((edge) => homeEdgePasses(edge, filters))
 }
 
@@ -235,6 +454,35 @@ type PathwayComposerPayload = {
   viaCompoundIds: string[]
 }
 
+/** One composer slot. ``id`` is the compound the autocomplete resolved (null
+ *  while the text is still raw — the server resolves those on Run). */
+type PathwayComposerSlot = { id: string | null; text: string }
+/** What is *typed* in the composer, as opposed to what is *run*. Kept out of the
+ *  URL on purpose: the URL describes the search on screen, this describes the
+ *  box. Backing out of a run un-commits the search, and the box keeps the chain
+ *  you were describing so you can tweak and re-run it. */
+type PathwayDraft = {
+  start: PathwayComposerSlot
+  end: PathwayComposerSlot
+  vias: PathwayComposerSlot[]
+}
+const emptyPathwayDraft = (): PathwayDraft => ({
+  start: { id: null, text: '' },
+  end: { id: null, text: '' },
+  vias: [],
+})
+
+/**
+ * `mapSearch` → 稳定的比较键。`undefined`（不在首页）必须与 `null`（裸首页）
+ * 分开: 前者是「无信号」, 拿它当「该清空」会在每次打开酶详情页时清掉地图上的检索
+ * 结果 —— 那正是这次改动要保住的行为。NUL 分隔是因为化合物名里会出现逗号。
+ */
+function mapSearchKey(spec: MapSearchRoute | null | undefined): string {
+  if (spec === undefined) return 'off-home'
+  if (spec === null) return 'none'
+  return [spec.mode, spec.query, spec.start, spec.end, ...spec.via].join('\u0000')
+}
+
 /** One oriented step (source→target compound pair) of the single route shown in
  *  the in-map detail sub-view. Composite steps carry ``groupId`` (their per-enzyme
  *  edges live behind loadExpandedEdgeGroup, not in the union graph's edges);
@@ -250,6 +498,8 @@ type PathwayDetailStep = {
 }
 
 export function CompoundGraphHome({
+  hidden,
+  resetNonce,
   onOpenSearch,
   onOpenDownloads,
   onOpenEnzyme,
@@ -258,8 +508,9 @@ export function CompoundGraphHome({
   onToggleQueue,
   isQueued,
   queueCount,
-  autoMapSearch,
-  onAutoMapSearchConsumed,
+  mapSearch,
+  mapSearchNonce,
+  onMapSearch,
   blastSession,
   autoBlastScope,
   onAutoBlastScopeConsumed,
@@ -268,6 +519,13 @@ export function CompoundGraphHome({
   onSearchSetChange,
   onQueueMany,
 }: {
+  /**
+   * 地图在整个会话里**常驻**，离开首页只隐藏不卸载（见 App.tsx）。
+   * 因此 hide 只是移出布局，绝不能影响任何内部状态 —— 用户回来时要一切照旧。
+   */
+  hidden?: boolean
+  /** App 的 `resetHome` 递增值；变化时清掉本组件自己的 scope/通路现场。 */
+  resetNonce?: number
   onOpenSearch: (query?: string) => void
   onOpenDownloads: () => void
   onOpenEnzyme: (enzymeId: string) => void
@@ -278,9 +536,16 @@ export function CompoundGraphHome({
   onQueueMany: (entries: Entity[]) => void
   isQueued: (id: string) => boolean
   queueCount: number
-  /** When the table-results page hands back to the map, run this query's scope search on mount. */
-  autoMapSearch?: { query: string; mode: 'enzyme' | 'pathway'; nonce: number } | null
-  onAutoMapSearchConsumed?: () => void
+  /**
+   * URL 上的检索规格 —— 检索是**地址栏的一条记录**, 不是本组件的一段内部 state。
+   * 三态: `undefined` 不在首页(无信号, 什么都别动)、`null` 裸首页(清场)、有值(跑它)。
+   * 详见 `lib/routes.ts` 的 `MapSearchRoute`。
+   */
+  mapSearch?: MapSearchRoute | null
+  /** 同一个规格被再次提交时递增 —— 只靠它发现「同一个词又按了一次回车」。 */
+  mapSearchNonce?: number
+  /** 把一次检索交给 App 写进 URL; 本组件只消费回流的 `mapSearch`。 */
+  onMapSearch?: (spec: MapSearchRoute | null) => void
   /** Last completed BLAST run (for scoping the map to its hit enzymes). */
   blastSession?: BlastSession | null
   autoBlastScope?: { sessionId: number; nonce: number } | null
@@ -321,6 +586,11 @@ export function CompoundGraphHome({
   /** The composer pill can be collapsed so the union-graph result is not blocked;
    *  a successful run hides it and shows a compact launcher instead. */
   const [composerOpen, setComposerOpen] = useState(true)
+  /** The composer unmounts every time it collapses (after a run, or by hand via
+   *  the launcher), so its slot text has to live up here — otherwise backing out
+   *  of a result reopens the composer blank and the chain just described is gone.
+   *  A ref, not state: a keystroke in the composer must not re-render the map. */
+  const pathwayDraftRef = useRef<PathwayDraft>(emptyPathwayDraft())
   /** In-map single-route detail sub-view. While non-null the map graph/positions/
    *  camera are swapped to exactly one returned route's chain; ``restore`` is the
    *  union-results view snapshot given back on "返回结果". Never Date.now()-keyed. */
@@ -331,7 +601,7 @@ export function CompoundGraphHome({
     restore: { graph: HomeGraphData; positions: Record<string, Point>; camera: Point }
   } | null>(null)
   /** Right slide-in enzyme picker (per-step multi-select) opened by the detail
-   *  bar's 下载 button. While open the map stays fully usable (no modal backdrop):
+   *  bar's Download button.While open the map stays fully usable (no modal backdrop):
    *  this 0-based index into the route's step list (buildPathwayDetailSteps) is
    *  the picker's *current step*, shared with the map so that a step chip in the
    *  popup and a chain-edge click on the map both switch it (bidirectional).
@@ -385,12 +655,33 @@ export function CompoundGraphHome({
   const [edgeThickness, setEdgeThickness] = useState(1)
   const [labelFontScale, setLabelFontScale] = useState(1)
   const [structureOpen, setStructureOpen] = useState(false)
-  const [activeFilters, setActiveFilters] = useState<HomeActiveFilters>({ species: [], sourceTypes: [] })
+  // 两档 chip 默认都亮、阈值默认 0 —— 打开就是全显示，与加筛选器之前的默认视图一致。
+  const [activeFilters, setActiveFilters] = useState<HomeActiveFilters>({
+    species: [], sourceTypes: [], minScore: 0, showMembrane: true, showNonMembrane: true,
+  })
   const [speciesOptions, setSpeciesOptions] = useState<string[]>([])
   /** 后端 sourceTypes 枚举; 拉不到就退回内置的 4 个值。 */
   const [sourceTypesFromApi, setSourceTypesFromApi] = useState<string[]>([])
   const [speciesMenuOpen, setSpeciesMenuOpen] = useState(false)
   const [speciesQuery, setSpeciesQuery] = useState('')
+  /** 侧栏「Solubility score」旁边那个问号的说明卡。它要能点空白处/按 Esc 关掉 ——
+   *  同组的 `.home-filter-menu` 只能靠再点一次按钮关，弹一个盖住滑块的卡片不能那样。 */
+  const [scoreHelpOpen, setScoreHelpOpen] = useState(false)
+  const scoreHelpRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!scoreHelpOpen) return
+    const dismiss = (event: Event) => {
+      if (event instanceof KeyboardEvent && event.key !== 'Escape') return
+      if (event instanceof PointerEvent && scoreHelpRef.current?.contains(event.target as Node)) return
+      setScoreHelpOpen(false)
+    }
+    window.addEventListener('pointerdown', dismiss)
+    window.addEventListener('keydown', dismiss)
+    return () => {
+      window.removeEventListener('pointerdown', dismiss)
+      window.removeEventListener('keydown', dismiss)
+    }
+  }, [scoreHelpOpen])
   const [activeNodeDragId, setActiveNodeDragId] = useState<string | null>(null)
   const [mapDragging, setMapDragging] = useState(false)
   const [panelPosition, setPanelPosition] = useState<Point | null>(null)
@@ -409,7 +700,8 @@ export function CompoundGraphHome({
   const preTraceRef = useRef<{ card: HomePathwayCard | null; id: string | null }>({ card: null, id: null })
   /** Handle for the auto-dismissing 连星 hint message timer. */
   const traceHintTimerRef = useRef<number | null>(null)
-  const autoSearchHandledRef = useRef<number | null>(null)
+  /** 上一次真正执行过的 URL 检索 (规格键 + nonce), 用来判断这次要不要动。 */
+  const appliedMapSearchRef = useRef<{ key: string; nonce: number } | null>(null)
   const autoBlastHandledRef = useRef<number | null>(null)
 
   // 搜索集变了要重新取图 —— 首页这张「全局浏览图」本身就是一次检索,
@@ -430,6 +722,27 @@ export function CompoundGraphHome({
         setSelectedPairKey(null)
         setExpandedEdges([])
         setSelectedEdgeId(null)
+        // 换搜索集会整张图换掉，而下面这些 scope/session 状态**重置的是图，不是它们**。
+        // 不一起清就会出现「浏览图 + 还活着的通路 session」：`scopeActive` 为真、
+        // 结果卡片照常渲染，但高亮键指向已经不在图里的节点。
+        // 地图常驻之后这条路更容易走到（酶详情页上也有搜索集控件），所以在这里收口。
+        setPathwayDetail(null)
+        setPickerOpen(false)
+        setPathwaySession(null)
+        setSelectedPathwayId(null)
+        setActivePathway(null)
+        setPathwayError(null)
+        setNoResult(false)
+        setNoResultMessage(null)
+        setHighlightedNodeIds(new Set())
+        setHighlightedEdgeIds(new Set())
+        setHighlightedEdgeGroupIds(new Set())
+        setScopeSearch(null)
+        setEnzymeScopeHitIds(null)
+        setBlastScope(null)
+        setBlastHitMap(new Map())
+        // 快照记的是「旧搜索集下的浏览图」，换集后已经对不上了，必须作废。
+        browseSnapshotRef.current = null
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Unable to load graph data')
@@ -523,13 +836,15 @@ export function CompoundGraphHome({
   // never on raw enzyme-edge ids: one enzyme row can back several pairs (bi-bi
   // reactions, reversible rows), and per-id matching would bleed the highlight
   // onto sibling pairs of the same enzyme (the "wrong edges lighting up" bug).
+  // 地图上一条线代表**一对化合物**（`PairEntry.key` 已无向化），所以这里也要用无向
+  // key：否则走向与主导方向相反的 pathway step 高亮不到它自己那条线。
   const activePathwayStepKeys = useMemo(() => {
     if (!activePathway) return null
     const chain = activePathway.compoundIds
     if (!chain || chain.length < 2) return null
     const keys = new Set<string>()
     for (let index = 0; index < chain.length - 1; index += 1) {
-      keys.add(pairKey(chain[index], chain[index + 1]))
+      keys.add(canonicalCompoundPairKey(chain[index], chain[index + 1]))
     }
     return keys
   }, [activePathway])
@@ -558,7 +873,7 @@ export function CompoundGraphHome({
     return [...present].sort((a, b) => a.localeCompare(b))
   }, [speciesOptions, groupItemMap, searchSet])
   const pairFilterMeta = useMemo(() => {
-    const meta = new Map<string, { visible: boolean; passing: number; singleLabel: string | null }>()
+    const meta = new Map<string, { visible: boolean; passing: number; enzymes: number; singleLabel: string | null }>()
     if (anyFilterActive) {
       viewModel.pairs.forEach((pair) => {
         const passing = homePairPassingUnits(pair, groupItemMap, activeFilters)
@@ -566,6 +881,8 @@ export function CompoundGraphHome({
         meta.set(pair.key, {
           visible: passing.length > 0,
           passing: passing.length,
+          // 过滤后剩下的**不同的酶**数 —— `passing` 是单元（记录）数，两者不等的原因同 `PairEntry.enzymeCount`。
+          enzymes: new Set(passing.map((unit) => unit.enzymeId)).size,
           singleLabel: passing.length === 1 && first ? homeUnitLabel(first) : null,
         })
       })
@@ -616,8 +933,10 @@ export function CompoundGraphHome({
         if (edge.sourceType) seen.add(edge.sourceType)
       })
     })
-    return sourceOptionsFromUnits(sourceTypesFromApi, seen)
-  }, [viewModel, groupItemMap, sourceTypesFromApi])
+    // 搜索集是硬边界: 集外的来源在这批数据里一个都没有, 列出来用户一选就是空图 ——
+    // 正是上面注释要防的那件事。空集时不回退到 API 全枚举(那会列出 0 行的枚举值)。
+    return sourceOptionsFromUnits(sourceTypesFromApi, seen, searchSet.length > 0 ? searchSet : null)
+  }, [viewModel, groupItemMap, sourceTypesFromApi, searchSet])
   const compoundName = (compoundId: string) => viewModel.nodes.find((node) => node.compoundId === compoundId)?.name || compoundId
   // ---- 连星 support data -------------------------------------------------
   // Every server-returned card begins at the session start compound and ends at
@@ -632,14 +951,21 @@ export function CompoundGraphHome({
   })()
   const traceAdjacency = useMemo(() => {
     const map = new Map<string, Set<string>>()
+    const addHop = (from: string, to: string) => {
+      const targets = map.get(from)
+      if (targets) targets.add(to)
+      else map.set(from, new Set([to]))
+    }
     viewModel.pairs.forEach((pair) => {
       if (anyFilterActive) {
         const meta = pairFilterMeta.get(pair.key)
         if (!meta || !meta.visible) return
       }
-      const targets = map.get(pair.sourceId)
-      if (targets) targets.add(pair.targetId)
-      else map.set(pair.sourceId, new Set([pair.targetId]))
+      addHop(pair.sourceId, pair.targetId)
+      // 被折掉的另一个方向同样是图上真实可走的一跳（能折的对全部来自 `unknown`，
+      // 搜索邻接表里本来就是两条有向边）。放在同一个可见性门控内，所以被筛选隐藏的
+      // pair 依旧不是合法跳。
+      if (pair.reverseSourceId && pair.reverseTargetId) addHop(pair.reverseSourceId, pair.reverseTargetId)
     })
     return map
   }, [viewModel.pairs, anyFilterActive, pairFilterMeta])
@@ -665,11 +991,14 @@ export function CompoundGraphHome({
     for (let index = 0; index < steps; index += 1) {
       const from = chain[index]
       const to = chain[index + 1]
-      const pair = viewModel.pairs.find((p) => p.sourceId === from && p.targetId === to)
+      // 按无向 key 查：一条线代表一对化合物，走向与之相反的一步同样落在它上面。
+      // 推入**全部** edgeGroupIds（而非只有主导方向）——否则与主导方向相反的这一步
+      // `groupId` 为 null，酶就没了，「下载路线」会少一步。
+      const pair = viewModel.pairs.find((p) => p.key === canonicalCompoundPairKey(from, to))
       const singleId = pair && !pair.edgeGroupId ? pair.edges[0]?.edgeId ?? pair.edgeIds[0] ?? null : null
       const groupId = pair?.edgeGroupId ?? null
       if (singleId) edgeIds.push(singleId)
-      if (groupId) edgeGroupIds.push(groupId)
+      if (pair) edgeGroupIds.push(...pair.edgeGroupIds)
       segments.push({ sourceCompoundId: from, targetCompoundId: to, edgeId: singleId, edgeGroupId: groupId })
     }
     return {
@@ -964,16 +1293,22 @@ export function CompoundGraphHome({
     setActivePathway(null)
     setSelectedLibraryItem(null)
     setHighlightedNodeIds(new Set([pair.sourceId, pair.targetId]))
-    setHighlightedEdgeGroupIds(new Set([pair.edgeGroupId || pair.key]))
+    setHighlightedEdgeGroupIds(new Set(pair.edgeGroupIds.length > 0 ? pair.edgeGroupIds : [pair.key]))
     setSearchFeedback(null)
     focusCameraOnPair(pair)
     let nextEdges: HomeGraphEdge[]
     if (pair.edges.length > 0 && pair.edges.length === pair.count) {
       nextEdges = pair.edges
-    } else if (pair.edgeGroupId) {
+    } else if (pair.edgeGroupIds.length > 0) {
       setExpandedLoading(true)
       try {
-        const edges = await loadExpandedEdgeGroup(pair.edgeGroupId, searchSet)
+        // 折叠对的两个方向各挂一个 group；当两侧指向同一批记录时（56 对孪生）展开
+        // 结果完全一样，所以按 edgeId 去重 —— 不去重面板计数会翻倍。
+        const loaded = await Promise.all(pair.edgeGroupIds.map((groupId) => loadExpandedEdgeGroup(groupId, searchSet)))
+        const expanded = Array.from(new Map(loaded.flat().map((edge) => [edge.edgeId, edge])).values())
+        const edges = pair.reverseSourceId
+          ? Array.from(new Map([...pair.edges, ...expanded].map((edge) => [edge.edgeId, edge])).values())
+          : expanded
         nextEdges = edges.length > 0 ? edges : pair.edges
       } finally {
         setExpandedLoading(false)
@@ -1008,7 +1343,7 @@ export function CompoundGraphHome({
     // composite edge out — the "点边" half of the bidirectional linkage.
     if (pickerOpen && pathwayDetail) {
       const index = detailSteps.findIndex(
-        (step) => step.sourceId === pair.sourceId && step.targetId === pair.targetId,
+        (step) => canonicalCompoundPairKey(step.sourceId, step.targetId) === pair.key,
       )
       if (index >= 0) {
         setPickerActiveStep(index)
@@ -1041,12 +1376,16 @@ export function CompoundGraphHome({
   }
 
   useEffect(() => {
+    // 这个监听挂在 window 上，而地图现在是常驻的 —— 不挡住的话，用户在酶详情页
+    // 按 Esc（比如关闭 BLAST 抽屉）就会顺手清掉**看不见的**地图选中，
+    // 回来时选中的边/配对莫名其妙没了。
+    if (hidden) return
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') clearPairSelection()
     }
     window.addEventListener('keydown', handleEscape)
     return () => window.removeEventListener('keydown', handleEscape)
-  }, [])
+  }, [hidden])
 
   const toggleSpeciesFilter = (species: string) => {
     setActiveFilters((prev) => ({
@@ -1062,8 +1401,21 @@ export function CompoundGraphHome({
     }))
   }
 
+  const setMinScore = (minScore: number) => {
+    setActiveFilters((prev) => ({ ...prev, minScore }))
+  }
+
+  /** 两档是平级兄弟，各有各的开关；谁都不影响滑块 —— 滑块只认 `showNonMembrane`。 */
+  const toggleMembraneLayer = (layer: 'membrane' | 'nonMembrane') => {
+    setActiveFilters((prev) => (layer === 'membrane'
+      ? { ...prev, showMembrane: !prev.showMembrane }
+      : { ...prev, showNonMembrane: !prev.showNonMembrane }))
+  }
+
   const resetActiveFilters = () => {
-    setActiveFilters({ species: [], sourceTypes: [] })
+    setActiveFilters({
+      species: [], sourceTypes: [], minScore: 0, showMembrane: true, showNonMembrane: true,
+    })
     setSpeciesQuery('')
     setSpeciesMenuOpen(false)
   }
@@ -1368,13 +1720,28 @@ export function CompoundGraphHome({
     clearPairSelection()
   }
 
-  /** Brand click: drop any scope/search running on this map, then hand the
-   *  parent a chance to reset the app-wide search state and land on home. */
+  /** Brand click: hand the parent a chance to reset the app-wide search state
+   *  and land on home. The map's own scope/search is dropped by the reset-signal
+   *  effect below, so all three brand buttons (map, search, downloads) converge
+   *  on one path instead of the map one self-clearing first. */
   const handleBrandHome = () => {
-    switchSearchMode('enzyme')
-    clearSearchScope()
     onResetHome?.()
   }
+
+  // `resetHome` used to clean this map by unmounting it. The map is mounted for
+  // the whole session now, so the parent has to say so explicitly — otherwise
+  // brand-clicking from the search or downloads page returns to a home map still
+  // wearing the last scope. The ref skips the initial nonce.
+  const resetHandledRef = useRef(resetNonce)
+  useEffect(() => {
+    if (resetHandledRef.current === resetNonce) return
+    resetHandledRef.current = resetNonce
+    // 品牌键是唯一的「从头开始」手势 —— 只有它连草稿一起清。退回首页(规格 `null`)
+    // 是「退掉那次检索」, 措辞不同, 所以那边保留输入框。
+    pathwayDraftRef.current = emptyPathwayDraft()
+    switchSearchMode('enzyme')
+    clearSearchScope()
+  }, [resetNonce])
 
   const runMapEnzymeSearch = async (query: string) => {
     // An enzyme keyword run owns the surface: leave pathway mode, drop any
@@ -1511,10 +1878,17 @@ export function CompoundGraphHome({
     }
   }
 
+  /** 撤掉地图上这次检索, 并且把 URL 上那条记录一起退掉 —— 否则刷新会把它复活。
+   *  没接 App 时(独立用这个组件)退回本地清理。 */
+  const clearSearchEverywhere = () => {
+    clearSearchScope()
+    if (onMapSearch) onMapSearch(null)
+  }
+
   const handleSearchSubmit = async () => {
     const trimmed = searchValue.trim()
     if (!trimmed) {
-      if (scopeActive) clearSearchScope()
+      if (scopeActive) clearSearchEverywhere()
       return
     }
     if (resultMode === 'table') {
@@ -1522,30 +1896,84 @@ export function CompoundGraphHome({
       onOpenSearch(trimmed)
       return
     }
+    // 检索必须成为一条历史记录: 交给 App 写进 URL, 结果由 `mapSearch` 回流。
+    if (onMapSearch) {
+      onMapSearch({ mode: 'enzyme', query: trimmed, start: '', end: '', via: [] })
+      return
+    }
     await runMapEnzymeSearch(trimmed)
   }
 
-  // Re-entering from another page's search bar (its Map half, or its Pathway
-  // half): act on it as soon as the browse graph has finished loading.
+  /**
+   * 检索的唯一入口: 地址栏说什么, 地图就画什么。
+   *
+   * 三态是这套东西成立的关键。从 `/?q=x` 打开 `/enzymes/X` 时规格变成
+   * `undefined`(不是首页, 无信号), 于是后退回 `/?q=x` 规格没变、结果原样还在;
+   * 再退一步到 `/` 规格才变成 `null`, 这时才清场。把两者合并就没法同时表达
+   * 「打开酶详情页别清」和「退回裸首页要清」。
+   *
+   * `mapSearchNonce` 只补 URL 表达不了的那一种: 同一个词连按两次回车时目标
+   * URL 与当前地址相同, `navigate` 提前 return, 光看规格发现不了第二次。
+   */
   useEffect(() => {
-    if (!autoMapSearch) return
-    if (autoSearchHandledRef.current === autoMapSearch.nonce) return
+    if (mapSearch === undefined) return
+    const key = mapSearchKey(mapSearch)
+    const nonce = mapSearchNonce ?? 0
+    if (appliedMapSearchRef.current?.key === key && appliedMapSearchRef.current.nonce === nonce) return
+    // 图还没就绪就先不消费 —— 但**不要**记已处理, 等图谱到位后这次仍要跑。
     if (loading || mapExpanding || !graph || graph.nodes.length === 0) return
-    autoSearchHandledRef.current = autoMapSearch.nonce
+    appliedMapSearchRef.current = { key, nonce }
     setResultMode('map')
+    if (mapSearch === null) {
+      clearSearchScope()
+      return
+    }
     // Pathway mode has no query to run — it opens the composer, which is where
     // a chain is actually described (start / waypoints / end).
-    if (autoMapSearch.mode === 'pathway') {
-      setSearchMode('pathway')
-      onAutoMapSearchConsumed?.()
+    if (mapSearch.mode === 'pathway') {
+      if (!mapSearch.start && !mapSearch.end && mapSearch.via.length === 0) {
+        // 只有 `?mode=pathway`: 打开描述新链的输入框。以前靠地图被卸载来得到一个空
+        // composer；地图常驻之后不清的话，从酶详情页点「Pathway」回来会看到上一次的
+        // 结果列表加一个折叠的启动器, 而不是用来描述新链的输入框。
+        // `clearPathwayResults` 末尾会把 composer 打开。草稿**不**跟着清: 后退也会
+        // 落到这条 URL 上(跑完是 `?mode=pathway&start=…`, 再退一步就是它), 清掉就
+        // 等于把刚描述的那条链扔了 —— 那正是这轮要修的东西。
+        clearPathwayResults()
+        setSearchMode('pathway')
+        return
+      }
+      // 草稿为空才拿 URL 回填: composer 手上的 `text` 是人读的化合物名, 而 URL 里存
+      // 的是交给服务端的 token(`CHEBI:60374`). 有草稿时以 composer 为准, 否则会把
+      // 好名字换成 token。空草稿只出现在深链 / 分享链接 / 新标签页。
+      const draft = pathwayDraftRef.current
+      if (!draft.start.text && !draft.end.text && draft.vias.length === 0) {
+        pathwayDraftRef.current = {
+          start: { id: null, text: mapSearch.start },
+          end: { id: null, text: mapSearch.end },
+          vias: mapSearch.via.map((token) => ({ id: null, text: token })),
+        }
+      }
+      // token 原样回放 —— 与 composer 交给 API 的是同一个契约(服务端自己解析
+      // id / 裸 ChEBI 号 / 化合物名), 所以 `pathwaySession.query` 的标签也一模一样。
+      void runPathwaySearch({
+        startCompoundId: mapSearch.start,
+        endCompoundId: mapSearch.end,
+        viaCompoundIds: mapSearch.via,
+      })
       return
     }
     setSearchMode('enzyme')
-    void runMapEnzymeSearch(autoMapSearch.query)
-    onAutoMapSearchConsumed?.()
-  }, [autoMapSearch, loading, mapExpanding, graph])
+    void runMapEnzymeSearch(mapSearch.query)
+  }, [mapSearch, mapSearchNonce, loading, mapExpanding, graph])
 
   // Same hand-off for a completed BLAST run: scope the map to the hit enzymes.
+  //
+  // 这个交接让 App push 了一条裸 `/`（`goTo('home')`），所以上面的 route effect
+  // 会看到规格从「有」变成 `null` 并顺手 `clearSearchScope()` —— 看起来会把自己
+  // 刚画好的 BLAST scope 抹掉。实际不会: 两个 effect 在**同一次 commit** 里按声明
+  // 顺序跑, route effect 在前, 本 effect 在后, 它的 `runBlastScopeSearch` 覆盖
+  // 前者清掉的那个 scope。`setAutoBlastScope` 与 `goTo('home')` 在同一个事件处理器
+  // 里被调用（React 批处理），两者永远同进同出。
   useEffect(() => {
     if (!autoBlastScope || !blastSession) return
     if (blastSession.id !== autoBlastScope.sessionId) return
@@ -1673,11 +2101,14 @@ export function CompoundGraphHome({
    *  single-edge steps expand from their own step.edges immediately. */
   const expandPickerStepOnMap = (step: PathwayDetailStep) => {
     const edges = step.groupId ? pickerGroupEdges[step.groupId] : step.edges
-    const key = pairKey(step.sourceId, step.targetId)
+    const key = canonicalCompoundPairKey(step.sourceId, step.targetId)
+    // 高亮这个 step 落在的那条线（折叠对可能挂着两个 group，只亮 step 自己那个会让
+    // 线看着没选中）。
+    const pair = viewModel.pairs.find((item) => item.key === key)
     setSelectedPairKey(key)
     setSelectedNodeId(null)
     setHighlightedNodeIds(new Set([step.sourceId, step.targetId]))
-    setHighlightedEdgeGroupIds(new Set([step.groupId || key]))
+    setHighlightedEdgeGroupIds(new Set(pair && pair.edgeGroupIds.length > 0 ? pair.edgeGroupIds : [step.groupId || key]))
     if (!edges || edges.length === 0) {
       setExpandedEdges([])
       setSelectedEdgeId(null)
@@ -1834,12 +2265,12 @@ export function CompoundGraphHome({
   }
 
   return (
-    <div className="home-map-page" style={homeMapStyle}>
+    <div className={`home-map-page${hidden ? ' map-hidden' : ''}`} style={homeMapStyle}>
       <section className="atlas-map-stage atlas-live-stage" aria-label="Interactive compound graph homepage">
         <header className="graph-top-nav">
           <button type="button" className="atlas-brand" onClick={handleBrandHome} title="Back to the Atlas home map" aria-label="Starase Atlas home">
             <span className="atlas-logo">
-              <Network size={18} />
+              <img className="atlas-logo-mark" src="/starase-atlas-logo.png" alt="" />
             </span>
             <span>Starase Atlas</span>
           </button>
@@ -1976,6 +2407,9 @@ export function CompoundGraphHome({
             )}
           </div>
 
+          {/* 没有可筛的来源时整组不渲染 —— 空的 chip 行只是个视觉噪声。
+              搜索集生效但图上一个来源都没有时会走到这里。 */}
+          {sourceFilterOptions.length > 0 && (
           <div className="home-filter-group">
             <p className="home-filter-label">Data source</p>
             <div className="home-chip-row home-source-chips">
@@ -1987,6 +2421,96 @@ export function CompoundGraphHome({
                   </button>
                 )
               })}
+            </div>
+          </div>
+          )}
+
+          {/* 两个 chip 是**平级**的两档；分数滑块挂在「非膜蛋白」下级，只约束它。
+              「非膜蛋白」含 'unannotated'（图上约两成）—— 严格只算 'non-membrane'
+              的话图上只剩 4% 的边，滑块等于空转。
+              全库 95,869 个酶都有分，所以滑块这组不需要「有没有数据」的守卫。
+
+              分组标题 2026-10-01 从 "Membrane" 改成 "Solubility score"（用户要求），
+              所以「标题叫分数、底下却是膜 chip」不是写错了：膜是**豁免**分数阈值的那一档,
+              两者本来就绑在一起。旁边的问号卡片负责把这层关系对用户讲清楚。
+              滑块自己的标签仍是 DeepSolNet Score, 没跟着改。 */}
+          <div className="home-filter-group">
+            <div className="home-filter-label-row" ref={scoreHelpRef}>
+              <p className="home-filter-label">Solubility score</p>
+              <button
+                type="button"
+                className={`home-filter-help ${scoreHelpOpen ? 'is-open' : ''}`}
+                onClick={() => setScoreHelpOpen((open) => !open)}
+                aria-expanded={scoreHelpOpen}
+                aria-label="What is the solubility score?"
+                title="What is the solubility score?"
+              >
+                <CircleHelp size={13} />
+              </button>
+              {scoreHelpOpen && (
+                <div className="home-filter-help-card" role="note">
+                  <p className="home-filter-help-title">Solubility score</p>
+                  <p className="home-filter-help-body">
+                    Computed by the open-source tool DeepSolNet with its original weights.
+                    It is a model reference score, not a strict probability that an enzyme
+                    is soluble.
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="home-chip-row home-membrane-chips">
+              <button
+                type="button"
+                className={`home-chip ${activeFilters.showMembrane ? 'on' : ''}`}
+                onClick={() => toggleMembraneLayer('membrane')}
+                title={activeFilters.showMembrane ? 'Hide membrane proteins' : 'Show membrane proteins'}
+              >
+                {activeFilters.showMembrane ? <Check size={11} /> : null}
+                Membrane
+              </button>
+
+              {/* 「Non-membrane」和它的下级滑块包在一起 —— 层级在 DOM 里就是真的，
+                  滑块在版面上直接落在这个 chip 底下，而不是落在整排 chip 后面。 */}
+              <div className="home-membrane-branch">
+                <button
+                  type="button"
+                  className={`home-chip ${activeFilters.showNonMembrane ? 'on' : ''}`}
+                  onClick={() => toggleMembraneLayer('nonMembrane')}
+                  title={activeFilters.showNonMembrane ? 'Hide non-membrane proteins' : 'Show non-membrane proteins'}
+                >
+                  {activeFilters.showNonMembrane ? <Check size={11} /> : null}
+                  Non-membrane
+                </button>
+
+                <div className={`home-filter-subgroup ${activeFilters.showNonMembrane ? '' : 'is-disabled'}`}>
+                  <p
+                    className="home-filter-label"
+                    title="DeepSolNet model reference score — not a solubility or expression label"
+                  >
+                    DeepSolNet Score
+                  </p>
+                  <div className="control-slider-row">
+                    <input
+                      id="home-min-score"
+                      className="control-slider"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={activeFilters.minScore}
+                      disabled={!activeFilters.showNonMembrane}
+                      onChange={(event) => setMinScore(Number(event.target.value))}
+                      aria-label="Minimum DeepSolNet score for non-membrane proteins"
+                    />
+                    <span className="control-value">{activeFilters.minScore.toFixed(2)}</span>
+                  </div>
+                  <p className="home-filter-hint">
+                    {activeFilters.minScore > 0
+                      ? `Hides non-membrane below ${activeFilters.minScore.toFixed(2)}. Membrane proteins exempt.`
+                      : 'Non-membrane only. Membrane proteins exempt.'}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -2074,7 +2598,7 @@ export function CompoundGraphHome({
             {scopeSearch.kind === 'enzyme' && (
               <button className="home-scope-action" type="button" onClick={() => onOpenSearch(scopeSearch.query)}>Open table</button>
             )}
-            <button className="home-scope-action ghost" type="button" onClick={clearSearchScope}>Clear search</button>
+            <button className="home-scope-action ghost" type="button" onClick={clearSearchEverywhere}>Clear search</button>
           </div>
         )}
         {searchMode === 'enzyme' && blastScope && !blastLoading && (
@@ -2084,7 +2608,7 @@ export function CompoundGraphHome({
               {blastScope.hits} hit{blastScope.hits === 1 ? '' : 's'} · query {blastScope.queryLength} aa · threshold E-value ≤ {blastScope.threshold === 10 ? '10' : blastScope.threshold.toExponential(0)} · {blastScope.searchedSubjects} subjects
             </span>
             <button className="home-scope-action" type="button" onClick={onOpenBlastTable}>Table results</button>
-            <button className="home-scope-action ghost" type="button" onClick={clearSearchScope}>Clear search</button>
+            <button className="home-scope-action ghost" type="button" onClick={clearSearchEverywhere}>Clear search</button>
           </div>
         )}
         {noResult && !enzymeSearchLoading && (
@@ -2093,11 +2617,11 @@ export function CompoundGraphHome({
             <p>{noResultMessage || (searchMode === 'pathway' ? 'Try different start/end compounds or fewer intermediate steps.' : 'Try a different compound name, enzyme name, EC number, or organism.')}</p>
             <div className="home-noresult-actions">
               {searchMode === 'pathway' ? (
-                <button className="home-scope-action ghost" type="button" onClick={clearSearchScope}>Back to browse map</button>
+                <button className="home-scope-action ghost" type="button" onClick={clearSearchEverywhere}>Back to browse map</button>
               ) : (
                 <button className="home-scope-action" type="button" onClick={() => onOpenSearch(searchValue.trim() || undefined)}>Search table view</button>
               )}
-              <button className="home-scope-action ghost" type="button" onClick={clearSearchScope}>Clear search</button>
+              <button className="home-scope-action ghost" type="button" onClick={clearSearchEverywhere}>Clear search</button>
             </div>
           </div>
         )}
@@ -2106,7 +2630,26 @@ export function CompoundGraphHome({
           <PathwaySearchComposer
             busy={pathwaySearchLoading}
             externalError={pathwayError}
-            onRun={(payload) => void runPathwaySearch(payload)}
+            initialDraft={pathwayDraftRef.current}
+            onDraftChange={(draft) => {
+              pathwayDraftRef.current = draft
+            }}
+            onRun={(payload) => {
+              // 同上: 先写进 URL, 再由 `mapSearch` 回流触发 `runPathwaySearch`。
+              // 带的是 composer 交给 API 的那串 token, 所以从 URL 重放出来的
+              // `pathwaySession.query` 标签与手动跑一次逐字相同。
+              if (onMapSearch) {
+                onMapSearch({
+                  mode: 'pathway',
+                  query: '',
+                  start: payload.startCompoundId,
+                  end: payload.endCompoundId,
+                  via: payload.viaCompoundIds,
+                })
+                return
+              }
+              void runPathwaySearch(payload)
+            }}
             onDismissError={() => setPathwayError(null)}
             onCollapse={() => setComposerOpen(false)}
           />
@@ -2134,7 +2677,7 @@ export function CompoundGraphHome({
             title="Trace a route on the map: click compounds connected to the start, one step at a time, until you reach the end compound"
           >
             <Link2 size={13} />
-            <span>连星</span>
+            <span>Trace</span>
           </button>
         )}
 
@@ -2197,20 +2740,30 @@ export function CompoundGraphHome({
                   if (!source || !target) return null
                   const pairMeta = anyFilterActive ? pairFilterMeta.get(pair.key) : undefined
                   if (pairMeta && !pairMeta.visible) return null
-                  const pairGroupId = pair.edgeGroupId || pair.key
+                  // 折叠对可能挂着两个 group，高亮要认全部（单元素时与原逻辑等价）。
+                  const pairGroupIds = pair.edgeGroupIds.length > 0 ? pair.edgeGroupIds : [pair.key]
                   const isExpanded = selectedPairKey === pair.key && pairEdges.length > 0
                   const expandedItems = expandedRenderUnits
                   const offsets = expandedItems.length > 1 ? expandedItems.map((_, index) => (index - (expandedItems.length - 1) / 2) * 5.2) : [0]
                   const displayCount = pairMeta ? pairMeta.passing : pair.count
+                  // 这行字写的是 `enzyme*N`，N 必须是**不同的酶**数而不是记录数：同一个酶用两条
+                  // 反应催化同一对化合物时后端给两条记录，`count=2` 而酶只有 1 个。过滤生效时
+                  // 同理，按通过的单元去重。`displayCount` 仍按记录数管线型（`multi`）与粗细。
+                  const labelCount = pairMeta ? pairMeta.enzymes : pair.enzymeCount
                   // When a composite is filtered down to a single surviving enzyme, that enzyme's
                   // accession is the one to annotate the collapsed line with.
-                  const filteredSingle = displayCount === 1 && anyFilterActive && pair.edgeGroupId
+                  const filteredSingle = labelCount === 1 && anyFilterActive && pair.edgeGroupIds.length > 0
                     ? homePairPassingUnits(pair, groupItemMap, activeFilters)[0]
                     : undefined
                   const singleUnit = filteredSingle || pair.edges[0]
                   const singleUnitAccession = singleUnit ? homeUnitAccession(singleUnit) : null
-                  const pairLineLabel = displayCount > 1 ? `enzyme*${displayCount}` : (singleUnitAccession || pair.edges[0]?.card?.primaryName || 'enzyme')
-                  const highlightedPair = highlightedEdgeGroupIds.has(pairGroupId) || pair.edgeIds.some((edgeId) => highlightedEdgeIds.has(edgeId))
+                  // 只剩一个酶时没有 `enzyme*1` 这种写法。复合边折叠着的时候 `pair.edges` 可能是
+                  // 空的，末尾兜到 `pair.label` —— 此时酶只有一个，它就是那个酶的 uniprot/名字。
+                  const singleUnitName = anyFilterActive
+                    ? (singleUnit ? homeUnitLabel(singleUnit) : null)
+                    : (pair.edges[0]?.card?.primaryName || pair.label)
+                  const pairLineLabel = labelCount > 1 ? `enzyme*${labelCount}` : (singleUnitAccession || singleUnitName || 'enzyme')
+                  const highlightedPair = pairGroupIds.some((groupId) => highlightedEdgeGroupIds.has(groupId)) || pair.edgeIds.some((edgeId) => highlightedEdgeIds.has(edgeId))
                   const pathwayPair = Boolean(activePathway && activePathwayStepKeys?.has(pair.key))
                   const pairActive = selectedPairKey === pair.key
                   const showPairLabel = pairActive || highlightedPair || pathwayPair
@@ -2442,6 +2995,8 @@ export function CompoundGraphHome({
                     <button className="enzyme-card-copy" type="button" onClick={() => openMergedUnit(group)}>
                       <h3>{singleMember ? (singleMember.representative.card?.primaryName || singleMember.label) : `${sourceLabel(group.sourceType || '')} entries`}</h3>
                       <span className={`search-table-source-tag ${group.sourceType}`}>{sourceLabel(group.sourceType || '')}</span>
+                      {/* 只有单成员时才显示分数 —— 合并卡片聚合了几千条，标一个分数是误导。 */}
+                      {singleMember && <EnzymeScoreChip score={singleMember.representative.card?.deepSolnetScore} membrane={singleMember.representative.card?.membrane} />}
                       <p>{organisms.size} organism{organisms.size === 1 ? '' : 's'}</p>
                       <p>{group.reactionIds.length === 1 ? '1 reaction' : `${group.reactionIds.length} reactions`}</p>
                       {singleMember && <p>{singleMember.representative.card?.organismName || 'Unknown organism'}</p>}
@@ -2465,6 +3020,7 @@ export function CompoundGraphHome({
                     {blastHit && (
                       <span className="enzyme-card-blast-chip" title="BLAST E-value">E-value {formatScopeEValue(blastHit.eValue)}</span>
                     )}
+                    <EnzymeScoreChip score={edge.card?.deepSolnetScore} membrane={edge.card?.membrane} />
                     <p>{edge.card?.organismName || 'Unknown organism'}</p>
                     <p>{group.reactionIds.length > 1 ? `${group.reactionIds.length} reactions` : edge.card?.reactionEquation || edge.label}</p>
                     {group.reactionIds.length > 1 && <p>{group.reactionIds.slice(0, 4).join(', ')}{group.reactionIds.length > 4 ? '...' : ''}</p>}
@@ -2489,7 +3045,7 @@ export function CompoundGraphHome({
                 <span>{pathwaySession.total} route{pathwaySession.total === 1 ? '' : 's'} · {pathwaySession.query}</span>
               </div>
               <div className="pathway-heading-actions">
-                <button className="stack-close-button" type="button" onClick={clearSearchScope} title="Close pathway results and clear the search">
+                <button className="stack-close-button" type="button" onClick={clearSearchEverywhere} title="Close pathway results and clear the search">
                   <X size={18} />
                 </button>
               </div>
@@ -2556,11 +3112,11 @@ export function CompoundGraphHome({
                         event.stopPropagation()
                         openPathwayDetail(card)
                       }}
-                      aria-label={`查看路线 ${index + 1} 详情`}
-                      title="查看该路线详情"
+                      aria-label={`View route ${index + 1} detail`}
+                      title="View this route's detail"
                     >
                       <ArrowUpRight size={13} />
-                      <span>详情</span>
+                      <span>Detail</span>
                     </button>
                   </div>
                 )
@@ -2598,10 +3154,10 @@ export function CompoundGraphHome({
         )}
 
         {detailOpen && pathwayDetail && (
-          <div className="pw-detail-bar" role="region" aria-label="路线详情">
-            <button className="pw-detail-back" type="button" onClick={closePathwayDetail} title="返回通路结果列表">
+          <div className="pw-detail-bar" role="region" aria-label="Route detail">
+            <button className="pw-detail-back" type="button" onClick={closePathwayDetail} title="Back to pathway results">
               <ArrowLeft size={14} />
-              <span>返回结果</span>
+              <span>Back to results</span>
             </button>
             <div className="pw-detail-summary">
               <strong>
@@ -2610,7 +3166,8 @@ export function CompoundGraphHome({
                 {compoundName(pathwayDetail.chain[pathwayDetail.chain.length - 1])}
               </strong>
               <span>
-                {pathwayDetail.card.stepCount} 步 · {pathwayDetail.chain.length} 化合物
+                {pathwayDetail.card.stepCount} step{pathwayDetail.card.stepCount === 1 ? '' : 's'} ·{' '}
+                {pathwayDetail.chain.length} compound{pathwayDetail.chain.length === 1 ? '' : 's'}
               </span>
             </div>
             <button
@@ -2618,11 +3175,11 @@ export function CompoundGraphHome({
               type="button"
               onClick={openPicker}
               disabled={pickerOpen}
-              aria-label="下载路线"
-              title="为每步选择酶后加入下载表"
+              aria-label="Download route"
+              title="Pick an enzyme for each step, then add to the downloading table"
             >
               <Download size={14} />
-              <span>下载</span>
+              <span>Download</span>
             </button>
           </div>
         )}
@@ -2691,7 +3248,7 @@ export function CompoundGraphHome({
             onAdd={(entity) => {
               onToggleQueue(entity)
               closePicker()
-              setSearchFeedback(`已加入下载表：${entity.name}`)
+              setSearchFeedback(`Added to the downloading table: ${entity.name}`)
             }}
           />
         )}
@@ -2715,31 +3272,48 @@ export function CompoundGraphHome({
 /* ---------------------------------------------------------------------------
  * Pathway-mode composer: ordered start → (…via…) → end with a whole-library
  * compound dictionary autocomplete on every slot. Rendered only while
- * searchMode === 'pathway', and it owns its slot text, so toggling modes
- * resets a composition (each mount starts blank).
+ * searchMode === 'pathway'.
+ *
+ * The slot text is *borrowed* from the parent (`initialDraft`), because this
+ * component unmounts every time it collapses — after a run, or by hand via the
+ * launcher pill. Owning the text locally meant every remount started blank, so
+ * backing out of a result threw away the chain just described. The parent's copy
+ * is a ref, so typing here never re-renders the map.
  * ------------------------------------------------------------------------- */
 function PathwaySearchComposer({
   busy,
   externalError,
+  initialDraft,
+  onDraftChange,
   onRun,
   onDismissError,
   onCollapse,
 }: {
   busy: boolean
   externalError: string | null
+  initialDraft: PathwayDraft
+  onDraftChange: (draft: PathwayDraft) => void
   onRun: (payload: PathwayComposerPayload) => void
   onDismissError: () => void
   onCollapse: () => void
 }) {
-  type ComposerSlot = { id: string | null; text: string }
+  type ComposerSlot = PathwayComposerSlot
   type ActiveField = { field: 'start' | 'end' | 'via'; viaIndex: number }
   const newSlot = (): ComposerSlot => ({ id: null, text: '' })
-  const [start, setStart] = useState<ComposerSlot>(newSlot)
-  const [end, setEnd] = useState<ComposerSlot>(newSlot)
-  const [vias, setVias] = useState<ComposerSlot[]>([])
+  // Seeded once per mount — `initialDraft` is read here and nowhere else, so the
+  // composer stays free to edit its own copy while typing.
+  const [start, setStart] = useState<ComposerSlot>(() => initialDraft.start)
+  const [end, setEnd] = useState<ComposerSlot>(() => initialDraft.end)
+  const [vias, setVias] = useState<ComposerSlot[]>(() => initialDraft.vias)
   const [active, setActive] = useState<ActiveField | null>(null)
   const [suggestions, setSuggestions] = useState<CompoundSuggestion[]>([])
   const [suggestionsLoading, setSuggestionsLoading] = useState(false)
+
+  // Hand every edit up so a remount can pick the composition back up. Writes the
+  // parent's ref only — no state there, so typing never re-renders the map.
+  useEffect(() => {
+    onDraftChange({ start, end, vias })
+  }, [start, end, vias, onDraftChange])
 
   const activeText = active
     ? active.field === 'start'
@@ -2791,7 +3365,20 @@ function PathwaySearchComposer({
     onDismissError()
   }
 
+  /** Swap the two endpoints, `id` included — the resolved compound must travel
+   *  with its text, otherwise a swapped slot would keep the old compound's id
+   *  and `submit` would send the text and the id of two different compounds. */
+  const swapEndpoints = () => {
+    setStart(end)
+    setEnd(start)
+    // The open suggestion dropdown belongs to the slot that used to hold `active`.
+    setActive(null)
+    setSuggestions([])
+    onDismissError()
+  }
+
   const canRun = !busy && start.text.trim().length > 0 && end.text.trim().length > 0
+  const canSwap = start.text.trim().length > 0 || end.text.trim().length > 0
 
   const submit = () => {
     if (!canRun) return
@@ -2914,6 +3501,18 @@ function PathwaySearchComposer({
         ),
       )}
       {renderSlot('slot:end', 'End', { field: 'end', viaIndex: -1 }, end.text, 'End compound (name / id / ChEBI)', updateEndText)}
+      {/* Sits next to the End capsule, not in the actions row below: swapping the
+          two endpoints belongs to the endpoints, not to Add via / Find pathways. */}
+      <button
+        className="pw-swap-ends"
+        type="button"
+        onClick={swapEndpoints}
+        disabled={!canSwap}
+        title="Swap the start and end compounds"
+        aria-label="Swap the start and end compounds"
+      >
+        <ArrowLeftRight size={14} />
+      </button>
       <div className="pw-composer-actions">
         <button className="pw-add-via" type="button" onClick={addVia} title="Add an intermediate compound the chain must pass through">
           <Plus size={14} /> Add via
@@ -3122,9 +3721,11 @@ export function EnzymeDetailView({ enzymeId, onBack, onToggleQueue, isQueued, qu
       <section className="enzyme-atlas-stage">
         {/* Same anatomy as the home map / search table top bar. */}
         <header className="graph-top-nav enzyme-topnav">
-          <button type="button" className="atlas-brand" onClick={onBack} title="Back to the Atlas home map" aria-label="Starase Atlas home">
+          {/* `onBack` is a real history pop, so it returns wherever the user came
+              from — which may be the search table, not the home map. */}
+          <button type="button" className="atlas-brand" onClick={onBack} title="Back" aria-label="Back">
             <span className="atlas-logo">
-              <Network size={18} />
+              <img className="atlas-logo-mark" src="/starase-atlas-logo.png" alt="" />
             </span>
             <span>Starase Atlas</span>
           </button>
@@ -3217,7 +3818,7 @@ export function EnzymeDetailView({ enzymeId, onBack, onToggleQueue, isQueued, qu
               {loading && <div className="detail-status"><Loader2 size={18} className="spin" /> Loading enzyme detail...</div>}
               {error && <div className="detail-status error-state"><X size={18} /> {error}</div>}
               {!enzymeId && !loading && (
-                <div className="detail-empty-card"><Dna size={30} /><h2>No enzyme selected</h2><button className="primary-button" type="button" onClick={onBack}><ArrowLeft size={15} /> Back home</button></div>
+                <div className="detail-empty-card"><Dna size={30} /><h2>No enzyme selected</h2><button className="primary-button" type="button" onClick={onBack}><ArrowLeft size={15} /> Back</button></div>
               )}
 
               {detail && (
@@ -3248,6 +3849,8 @@ export function EnzymeDetailView({ enzymeId, onBack, onToggleQueue, isQueued, qu
                         <div><dt>Gene name</dt><dd>{detail.gene?.geneName || 'n/a'}</dd></div>
                         <div><dt>Length</dt><dd>{sequenceLength ? `${sequenceLength} aa` : 'n/a'}</dd></div>
                         <div><dt>Mass (Da)</dt><dd>{detail.mass ? Math.round(detail.mass).toLocaleString() : 'n/a'}</dd></div>
+                        <div><dt>DeepSolNet Score</dt><dd>{detail.deepSolnetScore != null ? detail.deepSolnetScore.toFixed(3) : 'n/a'}</dd></div>
+                        <div><dt>Membrane</dt><dd>{membraneLabel(detail.membrane)}</dd></div>
                       </dl>
                     </div>
                   </section>
@@ -3331,6 +3934,11 @@ export function EnzymeDetailView({ enzymeId, onBack, onToggleQueue, isQueued, qu
                         <div key={`${label}:${index}`} className="detail-card enzyme-sequence-block enzyme-isoform-block">
                           <div className="enzyme-sequence-head">
                             <strong>Isoform {label}</strong>
+                            {/* 变体自己的分。全库只有 30 条真变体有 —— 其余是 null，不渲染。
+                                canonical 块上不重复显示，那里的分就是酶级那个。 */}
+                            {isoform.deepSolnetScore != null && (
+                              <span className="enzyme-sequence-badge" title="DeepSolNet model reference score — not a solubility label">DeepSolNet Score {isoform.deepSolnetScore.toFixed(3)}</span>
+                            )}
                             {isoform.isoformLength != null && <span className="enzyme-sequence-badge">{isoform.isoformLength} aa</span>}
                             {isoform.isoformMass && <span className="enzyme-sequence-badge">{Number(parseMass(isoform.isoformMass) || 0).toLocaleString()} Da</span>}
                             <span className={`enzyme-isoform-delta ${lengthDelta === null || lengthDelta === 0 ? 'is-same' : lengthDelta > 0 ? 'is-up' : 'is-down'}`}>
@@ -3797,24 +4405,124 @@ function createHomeLayout(graph: HomeGraphData | null) {
   return { nodes, positions, pairs: buildHomePairs(graph, visibleIds) }
 }
 
+/** One **directed** (source → target) bucket, before the two directions are folded. */
+type DirectedPairBucket = {
+  sourceId: string
+  targetId: string
+  label: string
+  count: number
+  /** 这一对端点上**不同的酶**个数（见 `PairEntry.enzymeCount`）。 */
+  enzymeCount: number
+  group: HomeGraphEdgeGroup | null
+  edgeIds: string[]
+  edges: HomeGraphEdge[]
+  /** 载荷里的 `edgeIds`/`items` 是否完整覆盖 `count`（见 `buildHomePairs`）。 */
+  complete: boolean
+}
+
+/**
+ * 首页边列表：**一对化合物一条**。
+ *
+ * 为什么要折叠：`graph_service._build_edges_and_groups` 按**有向** pair 分组，而
+ * `unknown` 同时属于两个方向白名单（`graph_service.py:17-18`），所以一条 `unknown`
+ * 反应会被正反各生成一条记录、**共用同一个 `edge_id`**。前端原先按有向 key 建索引，
+ * 于是同一对化合物被画成两条完全重合的线、两个标签叠在同一个坐标上 —— 实测 371 条线
+ * 里 80 条是这种重复，正是首页标签互相遮挡的主因（调节点间距永远分不开同坐标的标签）。
+ *
+ * 折叠**不丢方向信息**：能被折的必是 `unknown` 对（两个方向都合法，搜索邻接表里本来
+ * 就是两条有向边），而 `forward`/`reverse` 的对是单方向对（反向记录根本不会生成），
+ * 各自独立成桶，箭头照旧。布局层 `buildForceLayoutLinks` 早就无向化了，折叠后「画出来
+ * 的」「布局算的」「搜索走的」三者才真正一致。
+ *
+ * 计数**绝不虚增**：56/58 对 group 孪生的 `edgeIds` 集合完全相同（两侧指向同一批记录），
+ * 相加会翻倍。所以只在载荷可以证明完整时求并集，否则取主导方向的原值。
+ */
 function buildHomePairs(graph: HomeGraphData, visibleIds: Set<string>) {
-  const pairMap = new Map<string, PairEntry>()
+  // ---- 第一趟：按**有向** pair 分桶。取值优先级与折叠前逐条一致，所以单方向对
+  // （即绝大多数）的输出逐字节不变。 ----
+  const buckets = new Map<string, DirectedPairBucket>()
+  const bucketFor = (sourceId: string, targetId: string) => {
+    const key = pairKey(sourceId, targetId)
+    const found = buckets.get(key)
+    if (found) return found
+    const created: DirectedPairBucket = { sourceId, targetId, label: '', count: 0, enzymeCount: 0, group: null, edgeIds: [], edges: [], complete: true }
+    buckets.set(key, created)
+    return created
+  }
   graph.edgeGroups.forEach((group) => {
     if (!visibleIds.has(group.sourceCompoundId) || !visibleIds.has(group.targetCompoundId)) return
-    pairMap.set(pairKey(group.sourceCompoundId, group.targetCompoundId), { key: pairKey(group.sourceCompoundId, group.targetCompoundId), sourceId: group.sourceCompoundId, targetId: group.targetCompoundId, label: group.label, count: group.count, edgeGroupId: group.edgeGroupId, edgeIds: group.edgeIds, edges: [] })
+    const bucket = bucketFor(group.sourceCompoundId, group.targetCompoundId)
+    bucket.group = group
+    bucket.label = bucket.label || group.label
+    bucket.count = Math.max(bucket.count, group.count)
+    bucket.enzymeCount = Math.max(bucket.enzymeCount, group.enzymeCount)
+    bucket.edgeIds = Array.from(new Set([...bucket.edgeIds, ...group.edgeIds]))
+    // 后端 `count` = 参与分组的记录数，`edgeIds` 与之等长；`graph_service.py:180-181`
+    // 只保留「edge_id 也出现在 `edges[]` 里」的那些（一个都不剩时整体回退成完整列表）。
+    // 所以「长度 ≥ count」就是「载荷没被截断」的判据 —— 被截断的 group 会短，据此拒绝求并集。
+    bucket.complete = bucket.complete && bucket.edgeIds.length >= group.count
   })
   graph.edges.forEach((edge) => {
     if (!visibleIds.has(edge.sourceCompoundId) || !visibleIds.has(edge.targetCompoundId)) return
-    const key = pairKey(edge.sourceCompoundId, edge.targetCompoundId)
-    const current = pairMap.get(key)
-    const next: PairEntry = current || { key, sourceId: edge.sourceCompoundId, targetId: edge.targetCompoundId, label: edge.card?.primaryName || edge.label, count: 0, edgeIds: [], edges: [] }
-    next.count = Math.max(next.count, 1)
-    next.edgeIds = Array.from(new Set([...next.edgeIds, edge.edgeId]))
-    next.edges = Array.from(new Map([...next.edges, edge].map((item) => [item.edgeId, item])).values())
-    next.label = next.label || edge.card?.primaryName || edge.label
-    pairMap.set(key, next)
+    const bucket = bucketFor(edge.sourceCompoundId, edge.targetCompoundId)
+    bucket.count = Math.max(bucket.count, 1)
+    bucket.enzymeCount = Math.max(bucket.enzymeCount, 1)
+    bucket.edgeIds = Array.from(new Set([...bucket.edgeIds, edge.edgeId]))
+    bucket.edges = Array.from(new Map([...bucket.edges, edge].map((item) => [item.edgeId, item])).values())
+    bucket.label = bucket.label || edge.card?.primaryName || edge.label
   })
-  return [...pairMap.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+
+  // ---- 第二趟：按**无向** key 折叠。一个无向对最多只有两个方向，所以「另一个方向」
+  // 至多一个。 ----
+  const folded = new Map<string, DirectedPairBucket[]>()
+  buckets.forEach((bucket) => {
+    const key = canonicalCompoundPairKey(bucket.sourceId, bucket.targetId)
+    const list = folded.get(key)
+    if (list) list.push(bucket)
+    else folded.set(key, [bucket])
+  })
+
+  // 主导方向 = 记录数最多的那个；并列时按端点名序，保证与载荷顺序无关。
+  const bucketWeight = (bucket: DirectedPairBucket) => (bucket.group ? bucket.count : Math.max(bucket.count, 1))
+  const pairs: PairEntry[] = []
+  folded.forEach((list, key) => {
+    const ordered = [...list].sort((a, b) => bucketWeight(b) - bucketWeight(a) || a.sourceId.localeCompare(b.sourceId) || a.targetId.localeCompare(b.targetId))
+    const primary = ordered[0]
+    const reversed = ordered.find((bucket) => bucket.sourceId !== primary.sourceId || bucket.targetId !== primary.targetId) ?? null
+    if (!reversed) {
+      pairs.push({ key, sourceId: primary.sourceId, targetId: primary.targetId, label: primary.label, count: primary.count, enzymeCount: primary.enzymeCount, edgeGroupId: primary.group?.edgeGroupId ?? null, edgeGroupIds: primary.group ? [primary.group.edgeGroupId] : [], edgeIds: primary.edgeIds, edges: primary.edges, reverseSourceId: null, reverseTargetId: null })
+      return
+    }
+    const edgeGroupIds = Array.from(new Set(ordered.map((bucket) => bucket.group?.edgeGroupId).filter((id): id is string => Boolean(id))))
+    const edgeIds = Array.from(new Set(ordered.flatMap((bucket) => bucket.edgeIds)))
+    const edges = Array.from(new Map(ordered.flatMap((bucket) => bucket.edges).map((edge) => [edge.edgeId, edge])).values())
+    const complete = ordered.every((bucket) => bucket.complete)
+    // 一条记录 = 一个 edge_id（`unknown` 的两个方向共用同一个），所以 edgeId 并集就是
+    // 这对化合物的真实记录数 —— 与后端 `count` 同义。载荷被截断时并集不可知，退到
+    // 主导方向的原值：宁可偏小，绝不虚增，因为地图那行字正是 `enzyme*${count}`。
+    const count = complete ? edgeIds.length : Math.max(...ordered.map((bucket) => bucket.count))
+    // 只有两侧 group 的 `items` 都完整时才敢用酶并集重算标签；否则保留主导方向的标签，
+    // 不臆造一个载荷算不出来的数字。
+    const itemsKnown = ordered.every((bucket) => bucket.group && bucket.complete && (bucket.group.items?.length ?? 0) >= bucket.group.count)
+    // 地图那行 `enzyme*N` 要的是**不同的酶**数，不是记录数（见 `PairEntry.enzymeCount`）。
+    // 载荷能证明完整时按 items 去重 —— 折叠的两个方向共用同一批记录，这里必须取并集；
+    // 与 `count` 同一条原则：证明不了就宁可偏小，绝不虚增（退回各方向酶数的最大值）。
+    const enzymeCount = itemsKnown
+      ? new Set(ordered.flatMap((bucket) => (bucket.group?.items ?? []).map((item) => item.enzymeId))).size
+      : Math.max(...ordered.map((bucket) => bucket.enzymeCount))
+    const label = itemsKnown
+      ? (() => {
+          const items = ordered.flatMap((bucket) => bucket.group?.items ?? [])
+          const enzymeIds = new Set(items.map((item) => item.enzymeId))
+          if (enzymeIds.size > 1) return `${enzymeIds.size}×enzyme`
+          const only = items.find((item) => item.enzymeId === [...enzymeIds][0])
+          return only?.label || only?.enzymeId || primary.label
+        })()
+      : primary.label
+    pairs.push({ key, sourceId: primary.sourceId, targetId: primary.targetId, label, count, enzymeCount, edgeGroupId: edgeGroupIds[0] ?? null, edgeGroupIds, edgeIds, edges, reverseSourceId: reversed.sourceId, reverseTargetId: reversed.targetId })
+  })
+
+  return pairs.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label) || a.key.localeCompare(b.key))
 }
 
 function buildHomeDegreeScore(graph: HomeGraphData) {
@@ -3834,6 +4542,155 @@ function pickImportantHomeLabelIds(nodes: NodeCard[]) {
   )
 }
 
+/** Seed the home map from the graph's own tree, instead of a golden-angle spiral.
+ *
+ * The default map paints ~120 compounds over ~164 edges, and it is a forest rather
+ * than a deep hierarchy: the biggest component holds ~85 compounds (71%), the rest
+ * are small islands — a 6, a 4, a 3, then pairs — the highest degree anywhere is 10,
+ * and 54 compounds are degree-1 leaves. A golden-angle spiral throws that structure
+ * away and leaves the force pass to rediscover it, which it does not really do: it
+ * settles into whichever local minimum it drifts into.
+ *
+ * Seeding from the graph's own tree starts every leaf inside its parent's angular
+ * sector, which is what collapses the crossings — a spoke and its siblings never
+ * have to cross to reach their parent. Measured on the live page, same node set and
+ * same collision target: the spiral seed leaves 1270 straight-line crossings over
+ * 8137 units of edge, this one leaves 71 over 3841, and the minimum node gap comes
+ * out at the requested 14.00 either way.
+ *
+ * The force pass still runs afterwards and nudges things, so this only has to get
+ * the ORDER roughly right, not the spacing.
+ *
+ * Sibling order comes from degree and then from the caller's `nodes` order, never
+ * from Set iteration order — that is engine-specific, and relying on it would make
+ * the map differ between browsers. Verified: reloading the page reproduces every
+ * coordinate exactly.
+ */
+function createRadialHomeSeed(
+  nodes: HomeGraphCompound[],
+  links: ForceLayoutLink[],
+  degreeScore: Map<string, number>,
+  center: Point,
+): Record<string, Point> {
+  const seed: Record<string, Point> = {}
+  if (nodes.length === 0) return seed
+
+  const neighbours = new Map<string, Set<string>>()
+  links.forEach((link) => {
+    if (!neighbours.has(link.sourceId)) neighbours.set(link.sourceId, new Set())
+    if (!neighbours.has(link.targetId)) neighbours.set(link.targetId, new Set())
+    neighbours.get(link.sourceId)?.add(link.targetId)
+    neighbours.get(link.targetId)?.add(link.sourceId)
+  })
+
+  const rank = new Map(nodes.map((node, index) => [node.compoundId, index]))
+  const compare = (a: string, b: string) =>
+    (degreeScore.get(b) || 0) - (degreeScore.get(a) || 0) || (rank.get(a) || 0) - (rank.get(b) || 0)
+
+  // `nodes` arrives sorted by degree desc, so index 0 is the busiest compound and
+  // sits in the biggest component — the one worth giving the middle to. Rooting the
+  // tree anywhere else would fan the map out around a leaf.
+  const rootId = nodes[0]?.compoundId
+  if (!rootId) return seed
+
+  const depth = new Map<string, number>([[rootId, 0]])
+  const children = new Map<string, string[]>()
+  const queue: string[] = [rootId]
+  while (queue.length > 0) {
+    const current = queue.shift() as string
+    const kids: string[] = []
+    const adjacent = neighbours.get(current)
+    if (adjacent) {
+      const ordered = [...adjacent].sort(compare)
+      ordered.forEach((neighbour) => {
+        if (depth.has(neighbour)) return
+        depth.set(neighbour, (depth.get(current) || 0) + 1)
+        kids.push(neighbour)
+        queue.push(neighbour)
+      })
+    }
+    children.set(current, kids)
+  }
+
+  // Compounds the BFS never reached — the map is a forest, and the root's tree holds
+  // ~85 of the ~120 compounds — still need a slot. Hanging them off the root puts them
+  // on its ring in sectors of their own instead of stacking on the centre point.
+  const orphans = nodes.map((node) => node.compoundId).filter((id) => !depth.has(id))
+  if (orphans.length > 0) {
+    orphans.forEach((id) => {
+      depth.set(id, 1)
+      children.set(id, [])
+    })
+    children.set(rootId, [...(children.get(rootId) || []), ...orphans])
+  }
+
+  // Weight each node by the size of its subtree, so a hub's sector is as wide as
+  // the fan it has to hold and thin branches are not squeezed into slivers.
+  const weight = new Map<string, number>()
+  const weigh = (id: string): number => {
+    const cached = weight.get(id)
+    if (cached !== undefined) return cached
+    const kids = children.get(id) || []
+    const size = 1 + kids.reduce((sum, kid) => sum + weigh(kid), 0)
+    weight.set(id, size)
+    return size
+  }
+  weigh(rootId)
+
+  const angle = new Map<string, number>()
+  const place = (id: string, from: number, to: number) => {
+    const kids = children.get(id) || []
+    if (kids.length === 0) return
+    const inner = Math.max(weigh(id) - 1, 1)
+    let cursor = from
+    kids.forEach((kid) => {
+      const share = ((to - from) * weigh(kid)) / inner
+      angle.set(kid, cursor + share / 2)
+      place(kid, cursor, cursor + share)
+      cursor += share
+    })
+  }
+  place(rootId, 0, Math.PI * 2)
+
+  // Push each layer far enough out to hold its own population, and keep the radii
+  // strictly increasing so a child never lands inside its parent.
+  const layers = new Map<number, string[]>()
+  depth.forEach((level, id) => {
+    if (!layers.has(level)) layers.set(level, [])
+    layers.get(level)?.push(id)
+  })
+  const radius = new Map<string, number>([[rootId, 0]])
+  let previousRadius = 0
+  const levels = [...layers.keys()].sort((a, b) => a - b)
+  levels.forEach((level) => {
+    if (level === 0) return
+    const ids = layers.get(level) || []
+    previousRadius = Math.max(previousRadius + 14, (ids.length * 9) / (2 * Math.PI))
+    ids.forEach((id) => radius.set(id, previousRadius))
+  })
+
+  // Rescale to the same extent the spiral seed covered, so the force pass sees the
+  // inter-node distances its constants were tuned for.
+  const raw = nodes.map((node) => {
+    const r = radius.get(node.compoundId) || 0
+    const a = angle.get(node.compoundId) || 0
+    return { id: node.compoundId, x: Math.cos(a) * r, y: Math.sin(a) * r }
+  })
+  const xs = raw.map((point) => point.x)
+  const ys = raw.map((point) => point.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const scale = 100 / Math.max(maxX - minX, maxY - minY, 1)
+  const midX = (minX + maxX) / 2
+  const midY = (minY + maxY) / 2
+  raw.forEach((point) => {
+    seed[point.id] = { x: center.x + (point.x - midX) * scale, y: center.y + (point.y - midY) * scale }
+  })
+  return seed
+}
+
 function createInitialHomePositions(nodes: HomeGraphCompound[], graph: HomeGraphData) {
   const positions: Record<string, Point> = {}
   const velocities: Record<string, Point> = {}
@@ -3841,35 +4698,65 @@ function createInitialHomePositions(nodes: HomeGraphCompound[], graph: HomeGraph
   const visibleIds = new Set(nodes.map((node) => node.compoundId))
   const links = buildForceLayoutLinks(graph, visibleIds)
   const degreeScore = buildHomeDegreeScore(graph)
-  const total = Math.max(nodes.length, 1)
+  const seed = createRadialHomeSeed(nodes, links, degreeScore, center)
 
-  nodes.forEach((node, index) => {
-    const jitter = stableJitter(node.compoundId)
-    const angle = index * HOME_GOLDEN_ANGLE + jitter.x * 0.18
-    const radius = 8 + Math.sqrt((index + 0.5) / total) * 50
-    positions[node.compoundId] = {
-      x: center.x + Math.cos(angle) * radius * 0.86 + jitter.x * 2.5,
-      y: center.y + Math.sin(angle) * radius * 0.96 + jitter.y * 2.5,
-    }
+  nodes.forEach((node) => {
+    positions[node.compoundId] = seed[node.compoundId] || { x: center.x, y: center.y }
     velocities[node.compoundId] = { x: 0, y: 0 }
   })
 
+  /* The repulsion term dominates this pass: it is evaluated for every pair, which at
+     730 compounds is 266k pairs x 520 iterations — 15.3s measured, three quarters of
+     the whole layout.
+
+     The force law is deliberately left alone here. What made it slow was reaching
+     every field through the string-keyed maps on every pair: four lookups for the two
+     positions and two velocities, plus two more for the degrees. Flattening the points
+     into typed arrays once, and indexing those in the inner loop, drops that per-pair
+     overhead without changing a single force, so the layout stays bit-identical. */
+  const activeIds: string[] = []
+  nodes.forEach((node) => {
+    if (!node) return
+    if (!positions[node.compoundId] || !velocities[node.compoundId]) return
+    activeIds.push(node.compoundId)
+  })
+  const activeCount = activeIds.length
+  const pointX = new Float64Array(activeCount)
+  const pointY = new Float64Array(activeCount)
+  const velocityX = new Float64Array(activeCount)
+  const velocityY = new Float64Array(activeCount)
+  const activeDegree = new Float64Array(activeCount)
+  activeIds.forEach((id, slot) => { activeDegree[slot] = degreeScore.get(id) || 1 })
+
+  /* How far apart each pair is in the graph, so the collision term can grade the
+     berth instead of testing one bit. The shipped berths are flat, so what the loop
+     below actually consumes is the island-vs-not bit; the hop distance rides along
+     as the knob for it (see HOME_HOP_BERTH). The inner loop needs this per pair, so
+     it cannot be a string-keyed lookup — that would be 23M string builds at 300
+     compounds. One byte per ordered pair is 90KB here and 0.5MB on the whole
+     730-compound graph, and reduces the test to an integer index. Both directions
+     are filled so the lookup never has to order its two slots. */
+  const hopFields = buildHomeHopFields(activeIds, links)
+
   for (let iteration = 0; iteration < HOME_FORCE_ITERATIONS; iteration += 1) {
     const heat = 1 - iteration / HOME_FORCE_ITERATIONS
-    for (let first = 0; first < nodes.length; first += 1) {
-      for (let second = first + 1; second < nodes.length; second += 1) {
-        const source = nodes[first]
-        const target = nodes[second]
-        if (!source || !target) continue
-        const sourcePoint = positions[source.compoundId]
-        const targetPoint = positions[target.compoundId]
-        const sourceVelocity = velocities[source.compoundId]
-        const targetVelocity = velocities[target.compoundId]
-        if (!sourcePoint || !targetPoint || !sourceVelocity || !targetVelocity) continue
-        let dx = sourcePoint.x - targetPoint.x
-        let dy = sourcePoint.y - targetPoint.y
+    for (let slot = 0; slot < activeCount; slot += 1) {
+      const id = activeIds[slot] as string
+      const point = positions[id] as Point
+      const velocity = velocities[id] as Point
+      pointX[slot] = point.x
+      pointY[slot] = point.y
+      velocityX[slot] = velocity.x
+      velocityY[slot] = velocity.y
+    }
+    for (let first = 0; first < activeCount; first += 1) {
+      const firstX = pointX[first] as number
+      const firstY = pointY[first] as number
+      for (let second = first + 1; second < activeCount; second += 1) {
+        let dx = firstX - (pointX[second] as number)
+        let dy = firstY - (pointY[second] as number)
         if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
-          const jitter = stableJitter(`${source.compoundId}:${target.compoundId}`)
+          const jitter = stableJitter(`${activeIds[first]}:${activeIds[second]}`)
           dx = jitter.x || 0.1
           dy = jitter.y || 0.1
         }
@@ -3878,25 +4765,42 @@ function createInitialHomePositions(nodes: HomeGraphCompound[], graph: HomeGraph
         const force = (HOME_FORCE_REPULSION * heat) / distanceSq
         const forceX = (dx / distance) * force
         const forceY = (dy / distance) * force
-        sourceVelocity.x += forceX
-        sourceVelocity.y += forceY
-        targetVelocity.x -= forceX
-        targetVelocity.y -= forceY
+        velocityX[first] += forceX
+        velocityY[first] += forceY
+        velocityX[second] -= forceX
+        velocityY[second] -= forceY
 
-        const sourceDegree = degreeScore.get(source.compoundId) || 1
-        const targetDegree = degreeScore.get(target.compoundId) || 1
-        const collisionDistance = HOME_FORCE_COLLISION_DISTANCE + Math.min(2.2, Math.log2(sourceDegree + targetDegree + 1) * 0.28)
-        if (distance < collisionDistance) {
-          const collisionForce = (collisionDistance - distance) * HOME_FORCE_COLLISION_STRENGTH * (0.45 + heat)
-          const collisionX = (dx / distance) * collisionForce
-          const collisionY = (dy / distance) * collisionForce
-          sourceVelocity.x += collisionX
-          sourceVelocity.y += collisionY
-          targetVelocity.x -= collisionX
-          targetVelocity.y -= collisionY
+        /* The collision term only ever fires below collisionDistance, and the degree
+           bonus adds at most 2.2 on top of the base distance, so every pair further
+           out than that can skip the log2 entirely — it is the same test, just
+           evaluated in the cheap order. The base is floored at the old flat 21.6 so
+           no pair is pushed LESS than it used to be; only the pairs the graded berth
+           rates wider than that — the cross-component ones — actually change here.
+           This pass only has to pre-arrange the map for the grid pass below. */
+        const baseCollisionDistance = Math.max(
+          HOME_FORCE_COLLISION_DISTANCE,
+          homeBerthForHop(hopFields[first * activeCount + second] as number),
+        )
+        if (distance < baseCollisionDistance + 2.2) {
+          const collisionDistance = baseCollisionDistance + Math.min(2.2, Math.log2((activeDegree[first] as number) + (activeDegree[second] as number) + 1) * 0.28)
+          if (distance < collisionDistance) {
+            const collisionForce = (collisionDistance - distance) * HOME_FORCE_COLLISION_STRENGTH * (0.45 + heat)
+            const collisionX = (dx / distance) * collisionForce
+            const collisionY = (dy / distance) * collisionForce
+            velocityX[first] += collisionX
+            velocityY[first] += collisionY
+            velocityX[second] -= collisionX
+            velocityY[second] -= collisionY
+          }
         }
       }
     }
+    activeIds.forEach((id, slot) => {
+      const velocity = velocities[id]
+      if (!velocity) return
+      velocity.x = velocityX[slot] as number
+      velocity.y = velocityY[slot] as number
+    })
 
     links.forEach((link) => {
       const sourcePoint = positions[link.sourceId]
@@ -3933,7 +4837,7 @@ function createInitialHomePositions(nodes: HomeGraphCompound[], graph: HomeGraph
     })
   }
 
-  return relaxHomePositionCollisions(normalizeHomePositions(positions))
+  return relaxHomePositionCollisions(normalizeHomePositions(positions), links)
 }
 
 function buildForceLayoutLinks(graph: HomeGraphData, visibleIds: Set<string>): ForceLayoutLink[] {
@@ -3954,6 +4858,69 @@ function buildForceLayoutLinks(graph: HomeGraphData, visibleIds: Set<string>): F
   return [...links.values()]
 }
 
+/** Shortest-path hop count between every pair of the given compounds, capped.
+ *
+ * Returns a flat `n * n` byte per ordered pair: 1..3 for compounds that are that
+ * many hops apart, and `HOME_HOP_SENTINEL` for compounds in different connected
+ * components (and for a compound against itself). This is what lets the berth know
+ * the difference between "inside the big component" and "on another island
+ * entirely" — a distinction a plain has-an-edge test cannot make, and the one the
+ * shipped berths are set on. The exact hop count is not used by the shipped
+ * settings; it is kept because it is what those settings were tuned against.
+ *
+ * One BFS per compound is O(n * (n + m)) — about 265k steps at 300 compounds and
+ * 1.6M at 730, against a layout that costs seconds — and it is fully deterministic,
+ * unlike anything derived from Map iteration order. */
+function buildHomeHopFields(ids: string[], links: ForceLayoutLink[]): Uint8Array {
+  const count = ids.length
+  const slotOfId = new Map<string, number>()
+  ids.forEach((id, slot) => slotOfId.set(id, slot))
+  const adjacency: number[][] = ids.map(() => [])
+  links.forEach((link) => {
+    const sourceSlot = slotOfId.get(link.sourceId)
+    const targetSlot = slotOfId.get(link.targetId)
+    if (sourceSlot === undefined || targetSlot === undefined || sourceSlot === targetSlot) return
+    adjacency[sourceSlot]?.push(targetSlot)
+    adjacency[targetSlot]?.push(sourceSlot)
+  })
+
+  const cappedHop = HOME_HOP_BERTH.length - 1
+  const fields = new Uint8Array(count * count).fill(HOME_HOP_SENTINEL)
+  const hop = new Int16Array(count)
+  const queue = new Int32Array(count)
+  for (let source = 0; source < count; source += 1) {
+    hop.fill(-1)
+    hop[source] = 0
+    queue[0] = source
+    let head = 0
+    let tail = 1
+    while (head < tail) {
+      const current = queue[head] as number
+      head += 1
+      const nextHop = (hop[current] as number) + 1
+      // Past the cap nothing further out can change a berth, so stop expanding.
+      if (nextHop > cappedHop) continue
+      const neighbours = adjacency[current] as number[]
+      for (let index = 0; index < neighbours.length; index += 1) {
+        const neighbour = neighbours[index] as number
+        if (hop[neighbour] !== -1) continue
+        hop[neighbour] = nextHop
+        fields[source * count + neighbour] = nextHop
+        fields[neighbour * count + source] = nextHop
+        queue[tail] = neighbour
+        tail += 1
+      }
+    }
+  }
+  return fields
+}
+
+/** The minimum berth for a pair, given their hop field entry. */
+function homeBerthForHop(hop: number) {
+  if (hop === HOME_HOP_SENTINEL) return HOME_HOP_CROSS_COMPONENT
+  return HOME_HOP_BERTH[Math.min(hop, HOME_HOP_BERTH.length - 1)] as number
+}
+
 function normalizeHomePositions(positions: Record<string, Point>) {
   const points = Object.values(positions)
   if (points.length === 0) return positions
@@ -3963,31 +4930,98 @@ function normalizeHomePositions(positions: Record<string, Point>) {
   const maxY = Math.max(...points.map((point) => point.y))
   const width = Math.max(maxX - minX, 1)
   const height = Math.max(maxY - minY, 1)
-  const scaleX = ((HOME_LAYOUT_WIDTH - HOME_LAYOUT_MARGIN * 2) / width) * 0.96
-  const scaleY = ((HOME_LAYOUT_HEIGHT - HOME_LAYOUT_MARGIN * 2) / height) * 0.96
+  const box = homeLayoutBoxFor(points.length)
+  const scaleX = ((box.width - HOME_LAYOUT_MARGIN * 2) / width) * 0.96
+  const scaleY = ((box.height - HOME_LAYOUT_MARGIN * 2) / height) * 0.96
   const sourceCenter = { x: minX + width / 2, y: minY + height / 2 }
   const targetCenter = { x: HOME_VIEWBOX_WIDTH / 2, y: HOME_VIEWBOX_HEIGHT / 2 }
   const normalized: Record<string, Point> = {}
   Object.entries(positions).forEach(([compoundId, point]) => {
     normalized[compoundId] = {
-      x: clamp(targetCenter.x + (point.x - sourceCenter.x) * scaleX, HOME_LAYOUT_MIN_X + HOME_LAYOUT_MARGIN, HOME_LAYOUT_MAX_X - HOME_LAYOUT_MARGIN),
-      y: clamp(targetCenter.y + (point.y - sourceCenter.y) * scaleY, HOME_LAYOUT_MIN_Y + HOME_LAYOUT_MARGIN, HOME_LAYOUT_MAX_Y - HOME_LAYOUT_MARGIN),
+      x: clamp(targetCenter.x + (point.x - sourceCenter.x) * scaleX, box.minX + HOME_LAYOUT_MARGIN, box.maxX - HOME_LAYOUT_MARGIN),
+      y: clamp(targetCenter.y + (point.y - sourceCenter.y) * scaleY, box.minY + HOME_LAYOUT_MARGIN, box.maxY - HOME_LAYOUT_MARGIN),
     }
   })
   return normalized
 }
 
-function relaxHomePositionCollisions(positions: Record<string, Point>) {
+function relaxHomePositionCollisions(positions: Record<string, Point>, links: ForceLayoutLink[]) {
   const next = Object.fromEntries(Object.entries(positions).map(([compoundId, point]) => [compoundId, { ...point }])) as Record<string, Point>
   const entries = Object.entries(next)
+  const count = entries.length
+  const gap = HOME_FINAL_COLLISION_DISTANCE
+  /* The grid has one cell size but several thresholds, so the cell has to be sized
+     by the widest of them: the 3x3 sweep only guarantees finding every pair closer
+     than a cell. Sizing by the widest berth costs a few more candidates per cell
+     and keeps the "no pair closer than its own berth is ever skipped" guarantee. */
+  const cellSize = Math.max(gap, HOME_HOP_CROSS_COMPONENT)
+  const entryIds = entries.map(([compoundId]) => compoundId)
+  const hopFields = buildHomeHopFields(entryIds, links)
+  const box = homeLayoutBoxFor(count)
+  const minX = box.minX + HOME_LAYOUT_MARGIN
+  const maxX = box.maxX - HOME_LAYOUT_MARGIN
+  const minY = box.minY + HOME_LAYOUT_MARGIN
+  const maxY = box.maxY - HOME_LAYOUT_MARGIN
+
+  /* A pair only pushes when it is closer than `gap`, so the pass never has to look
+     at all n(n-1)/2 pairs — bucketing the points into a grid of `gap`-sized cells
+     and visiting just the 3x3 block around each point finds every such pair
+     (anything within `gap` shares a cell or touches a neighbouring one). That turns
+     each iteration from O(n^2) into about O(n), and no pair closer than `gap` is
+     ever skipped. At 730 compounds this was 5.5s of a 20.8s layout.
+
+     Pairs are still visited in ascending order, so the pass settles on the same
+     arrangement — at 120 compounds the crossings, minimum gap and total edge length
+     all come out identical. The coordinates are not bit-identical (max ~0.2 of a
+     256-unit box): the grid is a snapshot of the iteration's start, so a pair that
+     only closes mid-iteration has its correction deferred by one round. Both reach
+     a 14.00 gap, which is the fixed point that matters. */
+  const buckets = new Map<number, number[]>()
+  // Cell coordinates stay inside the clamped box, so a fixed stride key is enough
+  // and avoids building a string per lookup (2.7M of them at 730 compounds).
+  const STRIDE = 4096
+  const OFFSET = 1024
+  const cellKey = (cx: number, cy: number) => (cx + OFFSET) * STRIDE + (cy + OFFSET)
+  const cellOf = (value: number) => Math.floor(value / cellSize)
+
   for (let iteration = 0; iteration < HOME_FINAL_COLLISION_ITERATIONS; iteration += 1) {
     let moved = false
     const heat = 1 - iteration / HOME_FINAL_COLLISION_ITERATIONS
-    for (let first = 0; first < entries.length; first += 1) {
-      for (let second = first + 1; second < entries.length; second += 1) {
-        const [sourceId, source] = entries[first] || []
+    buckets.clear()
+    for (let index = 0; index < count; index += 1) {
+      const point = entries[index]?.[1]
+      if (!point) continue
+      const key = cellKey(cellOf(point.x), cellOf(point.y))
+      const bucket = buckets.get(key)
+      if (bucket) bucket.push(index)
+      else buckets.set(key, [index])
+    }
+    const candidates: number[] = []
+    for (let first = 0; first < count; first += 1) {
+      const [sourceId, source] = entries[first] || []
+      if (!sourceId || !source) continue
+      const cx = cellOf(source.x)
+      const cy = cellOf(source.y)
+      candidates.length = 0
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+          const bucket = buckets.get(cellKey(cx + offsetX, cy + offsetY))
+          if (!bucket) continue
+          for (let index = 0; index < bucket.length; index += 1) {
+            const candidate = bucket[index]
+            if (candidate !== undefined && candidate > first) candidates.push(candidate)
+          }
+        }
+      }
+      // Buckets are each ascending but the 3x3 sweep is not, and the original pass
+      // worked strictly in ascending `second` order. Restoring that order is what
+      // keeps this a refactor rather than a behaviour change.
+      candidates.sort((left, right) => left - right)
+      for (let index = 0; index < candidates.length; index += 1) {
+        const second = candidates[index]
+        if (second === undefined) continue
         const [targetId, target] = entries[second] || []
-        if (!sourceId || !targetId || !source || !target) continue
+        if (!targetId || !target) continue
         let dx = source.x - target.x
         let dy = source.y - target.y
         let distance = Math.hypot(dx, dy)
@@ -3997,8 +5031,13 @@ function relaxHomePositionCollisions(positions: Record<string, Point>) {
           dy = jitter.y || 0.1
           distance = Math.hypot(dx, dy)
         }
-        if (distance >= HOME_FINAL_COLLISION_DISTANCE) continue
-        const shift = ((HOME_FINAL_COLLISION_DISTANCE - distance) / 2) * (0.35 + heat * 0.65)
+        // The berth is graded by graph distance, not by has-a-line: two compounds on
+        // different islands get the widest one. That separation stretches no edge,
+        // but it is not free — the box is a fixed size, so the room comes out of
+        // the big component. See HOME_HOP_BERTH.
+        const pairGap = Math.max(gap, homeBerthForHop(hopFields[first * count + second] as number))
+        if (distance >= pairGap) continue
+        const shift = ((pairGap - distance) / 2) * (0.35 + heat * 0.65)
         const shiftX = (dx / distance) * shift
         const shiftY = (dy / distance) * shift
         source.x += shiftX
@@ -4009,8 +5048,8 @@ function relaxHomePositionCollisions(positions: Record<string, Point>) {
       }
     }
     entries.forEach(([, point]) => {
-      point.x = clamp(point.x, HOME_LAYOUT_MIN_X + HOME_LAYOUT_MARGIN, HOME_LAYOUT_MAX_X - HOME_LAYOUT_MARGIN)
-      point.y = clamp(point.y, HOME_LAYOUT_MIN_Y + HOME_LAYOUT_MARGIN, HOME_LAYOUT_MAX_Y - HOME_LAYOUT_MARGIN)
+      point.x = clamp(point.x, minX, maxX)
+      point.y = clamp(point.y, minY, maxY)
     })
     if (!moved) break
   }
@@ -4208,7 +5247,9 @@ function buildHomeSearchSuggestions(query: string, graph: HomeGraphData | null, 
     const sourceName = compoundNames.get(pair.sourceId) || pair.sourceId
     const targetName = compoundNames.get(pair.targetId) || pair.targetId
     if (includeKind('reaction')) {
-      const pairValues = [pair.label, pair.edgeGroupId, pair.sourceId, pair.targetId, sourceName, targetName]
+      // 折进来的另一个方向的 group id 也应当搜得到（否则搜 `GROUP_B_A` 会搜不到
+      // 已经合并成一条的那对化合物）。
+      const pairValues = [pair.label, ...pair.edgeGroupIds, pair.sourceId, pair.targetId, sourceName, targetName]
       const representativeEdge = pair.edges[0]
       const edgeValues = representativeEdge
         ? [representativeEdge.reactionId, representativeEdge.card?.reactionEquation, representativeEdge.direction, representativeEdge.sourceType, representativeEdge.reviewStatus]
@@ -4276,9 +5317,9 @@ function searchSuggestionScore(suggestion: HomeSearchSuggestion, normalizedQuery
 function findPairForEndpoints(graph: HomeGraphData, sourceId: string, targetId: string) {
   const visibleIds = new Set(graph.nodes.map((node) => node.compoundId))
   const pairs = buildHomePairs(graph, visibleIds)
-  return pairs.find((pair) => pair.sourceId === sourceId && pair.targetId === targetId)
-    || pairs.find((pair) => pair.sourceId === targetId && pair.targetId === sourceId)
-    || null
+  // `PairEntry.key` 已无向化，正反两向落在同一条上 —— 一次查找就够了（原来的
+  // 「反向回退」现在会命中同一条，属多余）。
+  return pairs.find((pair) => pair.key === canonicalCompoundPairKey(sourceId, targetId)) || null
 }
 
 function pickTargetEdge(edges: HomeGraphEdge[], target?: { edgeId?: string; enzymeId?: string; reactionId?: string }) {
@@ -4421,7 +5462,7 @@ function findGraphSearchMatch(query: string, graph: HomeGraphData, pairs: PairEn
   for (const pair of pairs) {
     const pairValues = [
       pair.key,
-      pair.edgeGroupId,
+      ...pair.edgeGroupIds,
       pair.label,
       pair.sourceId,
       pair.targetId,
@@ -4648,6 +5689,9 @@ function dedupeEnzymeChoices(edges: HomeGraphEdge[]): PathwayEnzymeChoice[] {
       name: card?.primaryName || edge.label || edge.enzymeId,
       organismName: card?.organismName ?? null,
       sourceType: edge.sourceType ?? null,
+      // 抄给抽屉与下载页用。不抄的话选完酶之后分数就丢了。
+      deepSolnetScore: card?.deepSolnetScore ?? null,
+      membrane: card?.membrane ?? null,
     })
   })
   return out
@@ -4769,18 +5813,18 @@ function PathwayEnzymePickerDrawer({
   const activeCandidates = activeStep && !activeLoading ? candidatesFor(activeStep) : []
 
   return (
-    <aside className="pw-enzyme-drawer" role="dialog" aria-label="为通路每一步选择酶">
+    <aside className="pw-enzyme-drawer" role="dialog" aria-label="Pick an enzyme for each pathway step">
       <header className="pw-drawer-header">
         <div>
-          <strong>选择每步酶</strong>
-          <span>点下方步骤、或图上该步的连线切换 · 可反复改选</span>
+          <strong>Select enzymes per step</strong>
+          <span>Click a step below, or its edge on the map, to switch · you can change your picks at any time</span>
         </div>
-        <button type="button" className="pw-drawer-close" onClick={onClose} title="关闭" aria-label="关闭选酶面板">
+        <button type="button" className="pw-drawer-close" onClick={onClose} title="Close" aria-label="Close the enzyme picker">
           <X size={18} />
         </button>
       </header>
 
-      <div className="pw-drawer-stepper" role="tablist" aria-label={`通路步骤，共 ${steps.length} 步`}>
+      <div className="pw-drawer-stepper" role="tablist" aria-label={`Pathway steps, ${steps.length} total`}>
         {steps.map((step, index) => {
           const done = (selection[step.step]?.length ?? 0) > 0
           const isActive = index === activeStepIndex
@@ -4792,11 +5836,11 @@ function PathwayEnzymePickerDrawer({
               aria-selected={isActive}
               className={`pw-drawer-chip${isActive ? ' is-active' : ''}${done ? ' is-done' : ''}`}
               onClick={() => onActiveStepChange(index)}
-              title={`第 ${step.step} 步：${step.sourceName} → ${step.targetName}`}
-              aria-label={`第 ${step.step} 步，${done ? '已选' : '未选'}`}
+              title={`Step ${step.step}: ${step.sourceName} → ${step.targetName}`}
+              aria-label={`Step ${step.step}, ${done ? 'picked' : 'not picked'}`}
             >
               <span className="pw-drawer-chip-tick">{done ? <Check size={12} /> : step.step}</span>
-              <span className="pw-drawer-chip-name">第 {step.step} 步</span>
+              <span className="pw-drawer-chip-name">Step {step.step}</span>
             </button>
           )
         })}
@@ -4811,15 +5855,15 @@ function PathwayEnzymePickerDrawer({
                 {activeStep.sourceName} <span className="pw-drawer-step-arrow">→</span> {activeStep.targetName}
               </span>
               {(selection[activeStep.step]?.length ?? 0) > 0 && (
-                <span className="pw-drawer-step-count">已选 {selection[activeStep.step]?.length}</span>
+                <span className="pw-drawer-step-count">{selection[activeStep.step]?.length} picked</span>
               )}
             </h4>
             {activeLoading ? (
               <p className="pw-drawer-step-loading">
-                <Loader2 size={14} className="pw-drawer-spin" /> 加载该步的酶…
+                <Loader2 size={14} className="pw-drawer-spin" /> Loading enzymes for this step…
               </p>
             ) : activeCandidates.length === 0 ? (
-              <p className="pw-drawer-step-empty">该步暂无酶数据</p>
+              <p className="pw-drawer-step-empty">No enzyme data for this step</p>
             ) : (
               <div className="pw-drawer-candidates">
                 {activeCandidates.map((enzyme) => {
@@ -4834,10 +5878,15 @@ function PathwayEnzymePickerDrawer({
                           {enzyme.uniprotId && enzyme.name && enzyme.name !== enzyme.uniprotId ? (
                             <em className="pw-drawer-candidate-name">{enzyme.name}</em>
                           ) : null}
-                          {(enzyme.organismName || enzyme.sourceType) && (
+                          {(enzyme.organismName || enzyme.sourceType || enzyme.deepSolnetScore != null) && (
                             <span className="pw-drawer-candidate-sub">
                               {enzyme.organismName ? <span className="pw-drawer-candidate-organism">{enzyme.organismName}</span> : null}
                               {enzyme.sourceType ? <span className="pw-drawer-candidate-src">{enzyme.sourceType}</span> : null}
+                              {enzyme.deepSolnetScore != null ? (
+                                <span className="pw-drawer-candidate-src" title="DeepSolNet model reference score — not a solubility label">
+                                  DeepSolNet Score {enzyme.deepSolnetScore.toFixed(3)}{enzyme.membrane === MEMBRANE_VALUE ? ' · membrane' : ''}
+                                </span>
+                              ) : null}
                             </span>
                           )}
                         </span>
@@ -4846,8 +5895,8 @@ function PathwayEnzymePickerDrawer({
                         type="button"
                         className="pw-drawer-candidate-open"
                         onClick={() => onOpenEnzyme(enzyme.enzymeId)}
-                        title={`查看 ${entryLabel} 详情`}
-                        aria-label={`查看 ${entryLabel} 详情`}
+                        title={`View detail for ${entryLabel}`}
+                        aria-label={`View detail for ${entryLabel}`}
                       >
                         <ArrowUpRight size={13} />
                       </button>
@@ -4862,10 +5911,10 @@ function PathwayEnzymePickerDrawer({
 
       <footer className="pw-drawer-footer">
         <span className="pw-drawer-count">
-          已选 {chosenStepCount}/{steps.length} 步
+          {chosenStepCount}/{steps.length} steps picked
         </span>
         <button type="button" className="pw-drawer-add" disabled={!canAdd} onClick={handleAdd}>
-          <Check size={15} /> 加入下载表
+          <Check size={15} /> Add to downloading table
         </button>
       </footer>
     </aside>
@@ -5001,6 +6050,11 @@ function MergedEnzymeDrawer({
                       <span className="pw-drawer-candidate-sub">
                         {organism ? <span className="pw-drawer-candidate-organism">{organism}</span> : null}
                         <span className="pw-drawer-candidate-src">{sourceLabel(edge.sourceType)}</span>
+                        {edge.card?.deepSolnetScore != null ? (
+                          <span className="pw-drawer-candidate-src" title="DeepSolNet model reference score — not a solubility label">
+                            DeepSolNet Score {edge.card.deepSolnetScore.toFixed(3)}{edge.card.membrane === MEMBRANE_VALUE ? ' · membrane' : ''}
+                          </span>
+                        ) : null}
                       </span>
                     </span>
                   </label>

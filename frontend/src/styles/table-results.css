@@ -161,6 +161,14 @@
   max-height: min(420px, calc(100vh - 180px));
   padding: 12px;
   overflow-y: auto;
+  /* Reset the nav's `nowrap`. `.graph-primary-nav` sets it so its buttons stay on
+     one line, but the search-set popover lives inside that nav, so the hint
+     paragraph inherited it and could not wrap: it overflowed by ~97px and gave
+     the popover a horizontal scrollbar. Only reaches the search-set popover —
+     the filter-toolbar popovers have no `nowrap` ancestor, so this is a no-op
+     for them. Children that want one line (`.search-table-org-name`, the summary
+     `small`s) still set their own `nowrap`. */
+  white-space: normal;
   border: 1px solid rgba(8, 26, 58, 0.18);
   border-radius: 8px;
   background: rgba(31, 51, 72, 0.99);
@@ -740,10 +748,11 @@
   color: var(--graph-navy, #081a3a);
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 12.5px;
+  /* 只折行、不截断：原来这里的 `white-space: nowrap` 让上面两行换行属性全部失效，
+     而 `text-overflow: ellipsis` 又因为没有 `overflow: hidden` 从来不生效 ——
+     两条一起删掉，和卡片里其它文字的收法保持一致。 */
   overflow-wrap: anywhere;
   word-break: break-word;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .search-table-ec-panel {

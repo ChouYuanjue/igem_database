@@ -42,6 +42,7 @@ from app.models import (
     Compound,
     Enzyme,
     EnzymeReactionEdge,
+    EnzymeSolubilityScore,
     Evidence,
     Gene,
     Reaction,
@@ -91,6 +92,10 @@ FIELD_MAP: Dict[str, dict] = {
     "doi":               {"table": "evidence", "column": "doi",             "label": "DOI"},
     "pubmedId":          {"table": "evidence", "column": "pubmed_id",       "label": "PubMed ID"},
     "referenceUrl":      {"table": "evidence", "column": "url",             "label": "Reference URL"},
+    # --- solubility (model score) -----------------------------------------
+    # ⚠️ 这是**模型参考分**, 不是可溶性标签, 也不是校准过的概率 —— 表头别写成 "Solubility"。
+    "deepSolNetScore":   {"table": "solubility", "column": "deep_solnet_score", "label": "DeepSolNet Score"},
+    "membrane":          {"table": "solubility", "column": "membrane",          "label": "Membrane"},
 }
 
 # Display order + grouping for the column picker. Mirrors FIELD_MAP's tables.
@@ -100,6 +105,7 @@ FIELD_GROUPS: List[Tuple[str, str]] = [
     ("gene",     "Gene"),
     ("compound", "Compound"),
     ("literature", "Literature"),
+    ("solubility", "Model Score"),
 ]
 
 # `table` in FIELD_MAP uses "evidence"; the picker labels that group "Literature".
@@ -330,6 +336,17 @@ async def _fetch_enzyme_rows(
     for item in evidence_result.scalars().all():
         evidence_by_enzyme.setdefault(item.enzyme_id, []).append(item)
 
+    score_result = await db.execute(
+        select(EnzymeSolubilityScore)
+        .where(EnzymeSolubilityScore.enzyme_id.in_(ids))
+        # 只取 canonical 行 —— 变体分经 `isoform_id IS NULL` 剔除后不会串到酶级字段上。
+        .where(EnzymeSolubilityScore.isoform_id.is_(None))
+        .order_by(EnzymeSolubilityScore.enzyme_id)
+    )
+    scores_by_enzyme: Dict[str, EnzymeSolubilityScore] = {
+        s.enzyme_id: s for s in score_result.scalars().all()
+    }
+
     all_reaction_ids = [r.reaction_id for rows in reactions_by_enzyme.values() for r in rows]
     compounds_by_reaction: Dict[str, List[Compound]] = {}
     if all_reaction_ids:
@@ -351,6 +368,7 @@ async def _fetch_enzyme_rows(
         enzyme_reactions = reactions_by_enzyme.get(enzyme_id, [])
         enzyme_genes = genes_by_enzyme.get(enzyme_id, [])
         enzyme_evidence = evidence_by_enzyme.get(enzyme_id, [])
+        enzyme_score = scores_by_enzyme.get(enzyme_id)
         enzyme_compounds = [
             compound
             for reaction in enzyme_reactions
@@ -371,7 +389,10 @@ async def _fetch_enzyme_rows(
                 row[field] = _joined(getattr(c, column, None) for c in enzyme_compounds)
             elif table == "evidence":
                 row[field] = _joined(getattr(e, column, None) for e in enzyme_evidence)
-            else:  # pragma: no cover - FIELD_MAP only names the five tables above
+            elif table == "solubility":
+                # 一酶一行(canonical), 所以是取值不是 _joined。缺行的酶留空。
+                row[field] = _val(getattr(enzyme_score, column, None)) if enzyme_score else ""
+            else:  # pragma: no cover - FIELD_MAP only names the six tables above
                 row[field] = ""
         rows.append(row)
 

@@ -45,7 +45,8 @@ engine = create_engine(DB_URL)
 
 # 有 enzyme_id 外键、自身没有 source_type 的子表。删除时靠子查询定位来源。
 # 顺序无所谓(它们互不引用), 但都必须早于 enzyme 的删除。
-CHILD_TABLES = ('enzyme_isoform', 'enzyme_go', 'evidence', 'gene_sequence_link', 'gene')
+CHILD_TABLES = ('enzyme_solubility_score', 'enzyme_isoform', 'enzyme_go', 'evidence',
+                'gene_sequence_link', 'gene')
 
 
 def purge_source(source):
@@ -80,7 +81,7 @@ def steps_for(only):
         ('2/6 enzymes', lambda o: etl_enzymes.run(o)),
         ('3/6 reactions', lambda o: etl_reactions.run(o)),
         ('4/6 edges', lambda o: etl_edges.run(o)),
-        ('5/6 master (sequence + gene + evidence + GO + isoforms)', lambda o: etl_master.run(o)),
+        ('5/6 master (sequence + gene + evidence + GO + isoforms + solubility scores)', lambda o: etl_master.run(o)),
         ('6/6 search index', lambda o: etl_search_index.run(o)),
     ]
 

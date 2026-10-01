@@ -5,7 +5,7 @@ from sqlalchemy import select, func
 
 from app.models import (
     Compound, Direction, Enzyme, Gene, Reaction,
-    ReactionCompound, EnzymeReactionEdge,
+    ReactionCompound, EnzymeReactionEdge, EnzymeSolubilityScore,
 )
 from app.schemas.graph import GraphPayload, ReactionEdge, EdgeGroup, EdgeGroupItem, FocusPoint
 from app.schemas.compound import CompoundCard
@@ -16,6 +16,10 @@ from app.services.search_service import search_entries
 
 DIRECTION_ALLOWS_SUBSTRATE_TO_PRODUCT = {"forward", "reversible", "unknown"}
 DIRECTION_ALLOWS_PRODUCT_TO_SUBSTRATE = {"reverse", "reversible", "unknown"}
+
+# enzyme_id -> (模型参考分, 膜三态)。一次查询取一批, 避免每条边各查一次。
+# 定义在模块顶部: 下面的函数签名用它做注解, 而注解在 def 时就求值。
+SolubilityMeta = Dict[str, Tuple[Optional[float], Optional[str]]]
 
 
 async def build_graph_payload(
@@ -58,10 +62,12 @@ async def build_graph_payload(
     compounds = await _fetch_compounds(db, compound_ids)
     cards = [_compound_to_card(c) for c in compounds]
     card_map = {c.compound_id: c for c in cards}
-    gene_names = await _load_gene_names(db, {record["enzyme_id"] for record in edge_records})
+    enzyme_ids = {record["enzyme_id"] for record in edge_records}
+    gene_names = await _load_gene_names(db, enzyme_ids)
+    solubility_meta = await _load_solubility_meta(db, enzyme_ids)
 
     # 4. Build edges and edge groups
-    edges, edge_groups = _build_edges_and_groups(edge_records, card_map, gene_names)
+    edges, edge_groups = _build_edges_and_groups(edge_records, card_map, gene_names, solubility_meta)
 
     # 5. Limit nodes without dropping every drawable edge endpoint
     if limit_nodes and len(cards) > limit_nodes:
@@ -185,6 +191,7 @@ def _limit_graph_payload(
             target_compound_id=group.target_compound_id,
             label=group.label,
             count=group.count,
+            enzyme_count=group.enzyme_count,
             edge_ids=kept_edge_ids,
             items=kept_items,
         ))
@@ -250,6 +257,36 @@ class _ReactionRef(NamedTuple):
     direction: Optional[Direction]
 
 
+def _edge_scope_exists(
+    source_types: Optional[List[str]],
+    review_statuses: Optional[List[str]],
+):
+    """EXISTS(该反应在搜索集里至少有一条边) —— 相关子查询, 用于圈定可遍历的反应。
+
+    搜索集必须落在 `EnzymeReactionEdge` 上, 不能落在 `Reaction` 上:
+    `reaction.source_type` / `review_status` 是**常量列**(实测 714 行全为
+    swiss_prot / official —— 反应是跨酶共享的客观实体, ETL 无条件盖章),
+    筛它等于 no-op: `source_types=['trembl']` 会放行全部 714 个反应, 但下方的
+    edge_query 一条 trembl 边都取不到, 于是只剩节点没有边(前端表现为 300 个孤立点)。
+
+    EXISTS 与 edge_query 圈定同一张表、同一组谓词, 所以反应域与最终画出的边严格一致。
+    两种 rc_query 形状都兼容: SQLAlchemy 的自动相关在**编译期**按外层 SELECT 的
+    FROM 列表解析, 与本表达式在哪个函数里构造无关 —— 所以引用 join 进来的
+    `Reaction` 是合法的, 尽管它不是 FROM 的第一张表。
+
+    `source_types` / `review_statuses` 均为空时**不要**调用本函数, 直接在
+    `rc_query` 上追加一个恒真的 EXISTS 会改变 SQL 形状(见两个调用点的 `if`)。
+    """
+    edge_match = select(EnzymeReactionEdge.reaction_id).where(
+        EnzymeReactionEdge.reaction_id == Reaction.reaction_id
+    )
+    if source_types:
+        edge_match = edge_match.where(EnzymeReactionEdge.source_type.in_(source_types))
+    if review_statuses:
+        edge_match = edge_match.where(EnzymeReactionEdge.review_status.in_(review_statuses))
+    return edge_match.exists()
+
+
 async def _build_global_graph_payload(
     db: AsyncSession,
     limit_nodes: Optional[int],
@@ -276,10 +313,11 @@ async def _build_global_graph_payload(
         Reaction, ReactionCompound.reaction_id == Reaction.reaction_id
     ).where(ReactionCompound.compound_id.in_(displayable_ids))
 
-    if source_types:
-        rc_query = rc_query.where(Reaction.source_type.in_(source_types))
-    if review_statuses:
-        rc_query = rc_query.where(Reaction.review_status.in_(review_statuses))
+    # 搜索集圈定在边上, 不在 reaction 上 —— 见 _edge_scope_exists 的 docstring。
+    # 剔除「零匹配边的反应」对结果集是幂等的: 那些反应的边本来就会被下方
+    # edge_query 的 EnzymeReactionEdge 筛选滤光。
+    if source_types or review_statuses:
+        rc_query = rc_query.where(_edge_scope_exists(source_types, review_statuses))
 
     rc_result = await db.execute(rc_query)
     rc_reaction_pairs = rc_result.all()
@@ -329,7 +367,9 @@ async def _build_global_graph_payload(
 
     edge_result = await db.execute(edge_query)
     edge_rows = edge_result.all()
-    gene_names = await _load_gene_names(db, {row.enzyme_id for row in edge_rows})
+    edge_enzyme_ids = {row.enzyme_id for row in edge_rows}
+    gene_names = await _load_gene_names(db, edge_enzyme_ids)
+    solubility_meta = await _load_solubility_meta(db, edge_enzyme_ids)
 
     edge_records: List[dict] = []
     for row in edge_rows:
@@ -361,7 +401,7 @@ async def _build_global_graph_payload(
 
     cards = [_compound_to_card(compound) for compound in compounds]
     card_map = {card.compound_id: card for card in cards}
-    edges, edge_groups = _build_edges_and_groups(edge_records, card_map, gene_names)
+    edges, edge_groups = _build_edges_and_groups(edge_records, card_map, gene_names, solubility_meta)
 
     if limit_nodes and len(cards) > limit_nodes:
         cards, edges, edge_groups = _limit_graph_payload(
@@ -412,11 +452,14 @@ async def build_graph_payload_for_enzymes(
     if not edge_rows:
         return GraphPayload()
 
-    gene_names = await _load_gene_names(db, {ere.enzyme_id for ere, _ in edge_rows})
+    row_enzyme_ids = {ere.enzyme_id for ere, _ in edge_rows}
+    gene_names = await _load_gene_names(db, row_enzyme_ids)
+    solubility_meta = await _load_solubility_meta(db, row_enzyme_ids)
     return await _ere_rows_to_graph_payload(
         db,
         edge_rows,
         gene_names,
+        solubility_meta,
         limit_nodes=limit_nodes,
     )
 
@@ -425,6 +468,7 @@ async def _ere_rows_to_graph_payload(
     db: AsyncSession,
     edge_rows: List[Tuple[EnzymeReactionEdge, Enzyme]],
     gene_names: Dict[str, Optional[str]],
+    solubility_meta: Optional[SolubilityMeta] = None,
     limit_nodes: Optional[int] = 80,
     center_id: Optional[str] = None,
     keep_pair: Optional[Set[Tuple[str, str]]] = None,
@@ -522,7 +566,7 @@ async def _ere_rows_to_graph_payload(
     cards = [_compound_to_card(compound) for compound in compounds]
     card_map = {card.compound_id: card for card in cards}
 
-    edges, edge_groups = _build_edges_and_groups(edge_records, card_map, gene_names)
+    edges, edge_groups = _build_edges_and_groups(edge_records, card_map, gene_names, solubility_meta)
 
     if limit_nodes and len(cards) > limit_nodes:
         cards, edges, edge_groups = _limit_graph_payload(
@@ -545,6 +589,7 @@ async def build_payload_from_edge_rows(
     db: AsyncSession,
     edge_rows: List[Tuple[EnzymeReactionEdge, Enzyme]],
     gene_names: Dict[str, Optional[str]],
+    solubility_meta: Optional[SolubilityMeta] = None,
     keep_pair: Optional[Set[Tuple[str, str]]] = None,
 ) -> GraphPayload:
     """Untrimmed GraphPayload from raw ``(EnzymeReactionEdge, Enzyme)`` rows.
@@ -559,6 +604,7 @@ async def build_payload_from_edge_rows(
         db,
         edge_rows,
         gene_names,
+        solubility_meta,
         limit_nodes=None,
         center_id=None,
         keep_pair=keep_pair,
@@ -578,13 +624,14 @@ async def build_pathway_union_payload(
     nodes/edges/edgeGroups are the union of those pathways' elements (each group
     still keeps its full ``items`` for the client-side species/source filters).
     """
-    gene_names = await _load_gene_names(
-        db, {ere.enzyme_id for ere, _ in edge_rows}
-    )
+    row_enzyme_ids = {ere.enzyme_id for ere, _ in edge_rows}
+    gene_names = await _load_gene_names(db, row_enzyme_ids)
+    solubility_meta = await _load_solubility_meta(db, row_enzyme_ids)
     return await build_payload_from_edge_rows(
         db,
         edge_rows,
         gene_names,
+        solubility_meta,
         keep_pair=keep_pair,
     )
 
@@ -613,10 +660,12 @@ async def _bfs_subgraph(
             Reaction, ReactionCompound.reaction_id == Reaction.reaction_id
         ).where(ReactionCompound.compound_id == current_id)
 
-        if source_types:
-            rc_query = rc_query.where(Reaction.source_type.in_(source_types))
-        if review_statuses:
-            rc_query = rc_query.where(Reaction.review_status.in_(review_statuses))
+        # 同 global, 但这里换 EXISTS 是**语义**修复而不只是防御: 下方扩展 frontier 时
+        # 不看该反应有没有匹配的边, 所以筛错表会让遍历顺着「本来源里根本无边」的反应
+        # 把节点拉进图(source_types=['swiss_prot'] 实测多出 71 个孤立化合物); 而
+        # ['trembl'] 时 rc_query 直接空转, 整张图退化成中心点。
+        if source_types or review_statuses:
+            rc_query = rc_query.where(_edge_scope_exists(source_types, review_statuses))
 
         result = await db.execute(rc_query)
         rc_reaction_pairs = result.all()
@@ -738,6 +787,41 @@ async def _fetch_displayable_compound_ids(db: AsyncSession, compound_ids: Set[st
     return {row[0] for row in result.all()}
 
 
+async def _load_solubility_meta(db: AsyncSession, enzyme_ids: Set[str]) -> SolubilityMeta:
+    """取这批酶的 canonical 分数 + 膜注释。与 `_load_gene_names` 同款: 一次查询。
+
+    ⚠️ **`isoform_id IS NULL` 不能省** —— 一个酶在库里可有 1 条 canonical 行
+    加 0..N 条变体行, 不带这个谓词会把变体的分当成酶的分(且顺序不定)。
+
+    ⚠️ **不要把这些字段并进 `_EnzymeRef` 再改投影 SQL。** 看起来更省一次查询, 但
+    `build_graph_payload_for_enzymes` / `expand_edge_group` 传的是**真 Enzyme 实体**,
+    那条路上 `enz` 没有这两个属性 —— 会 AttributeError。按请求取一次字典对两条路都成立。
+
+    DECIMAL 经 pymysql 回来是 `Decimal`, 这里转 float: 声明上是 `Optional[float]`,
+    留着 Decimal 会在 pydantic 序列化时多一层转换, 值也已经是 6 位定标不丢精度的。
+    """
+    if not enzyme_ids:
+        return {}
+
+    result = await db.execute(
+        select(
+            EnzymeSolubilityScore.enzyme_id,
+            EnzymeSolubilityScore.deep_solnet_score,
+            EnzymeSolubilityScore.membrane,
+        ).where(
+            EnzymeSolubilityScore.enzyme_id.in_(list(enzyme_ids)),
+            EnzymeSolubilityScore.isoform_id.is_(None),
+        )
+    )
+    return {
+        row.enzyme_id: (
+            float(row.deep_solnet_score) if row.deep_solnet_score is not None else None,
+            row.membrane,
+        )
+        for row in result.all()
+    }
+
+
 async def _load_gene_names(db: AsyncSession, enzyme_ids: Set[str]) -> Dict[str, Optional[str]]:
     if not enzyme_ids:
         return {}
@@ -774,6 +858,7 @@ def _build_edges_and_groups(
     edge_records: List[dict],
     card_map: Dict[str, CompoundCard],
     gene_names: Dict[str, Optional[str]],
+    solubility_meta: Optional[SolubilityMeta] = None,
 ) -> Tuple[List[ReactionEdge], List[EdgeGroup]]:
     """Group edges by (source, target) to detect overlaps."""
 
@@ -821,6 +906,7 @@ def _build_edges_and_groups(
                     rec, from_cpd, to_cpd, rec["direction"],
                     recs[0]["reaction"],
                     gene_names.get(rec["enzyme_id"]),
+                    solubility_meta,
                 ),
             ))
         else:
@@ -835,15 +921,17 @@ def _build_edges_and_groups(
                 target_compound_id=to_cpd,
                 label=label,
                 count=len(recs),
+                enzyme_count=enz_count,
                 edge_ids=edge_ids,
-                items=[_edge_group_item(rec) for rec in recs],
+                items=[_edge_group_item(rec, solubility_meta) for rec in recs],
             ))
 
     return edges, edge_groups
 
 
-def _edge_group_item(rec: dict) -> EdgeGroupItem:
+def _edge_group_item(rec: dict, solubility_meta: Optional[SolubilityMeta] = None) -> EdgeGroupItem:
     enz = rec["enzyme"]
+    score, membrane = (solubility_meta or {}).get(enz.enzyme_id, (None, None))
     return EdgeGroupItem(
         edge_id=rec["edge_id"],
         enzyme_id=enz.enzyme_id,
@@ -851,6 +939,8 @@ def _edge_group_item(rec: dict) -> EdgeGroupItem:
         organism_name=enz.organism_name,
         source_type=rec["source_type"],
         review_status=rec["review_status"],
+        deep_solnet_score=score,
+        membrane=membrane,
     )
 
 
@@ -861,8 +951,10 @@ def _make_enzyme_card(
     direction: str,
     reaction,
     gene_name: Optional[str] = None,
+    solubility_meta: Optional[SolubilityMeta] = None,
 ) -> EnzymeCard:
     enz = rec["enzyme"]
+    score, membrane = (solubility_meta or {}).get(enz.enzyme_id, (None, None))
     return EnzymeCard(
         edge_id=rec["edge_id"],
         enzyme_id=enz.enzyme_id,
@@ -877,6 +969,8 @@ def _make_enzyme_card(
         reaction_direction=direction,
         source_type=rec["source_type"],
         review_status=rec["review_status"],
+        deep_solnet_score=score,
+        membrane=membrane,
     )
 
 
@@ -938,7 +1032,9 @@ async def expand_edge_group(
 
     edge_result = await db.execute(edge_query)
     edge_rows = edge_result.all()
-    gene_names = await _load_gene_names(db, {ere.enzyme_id for ere, _ in edge_rows})
+    row_enzyme_ids = {ere.enzyme_id for ere, _ in edge_rows}
+    gene_names = await _load_gene_names(db, row_enzyme_ids)
+    solubility_meta = await _load_solubility_meta(db, row_enzyme_ids)
 
     # Get reaction_compound data to determine direction
     rc_query = select(ReactionCompound).where(
@@ -987,6 +1083,7 @@ async def expand_edge_group(
                 },
                 from_cpd, to_cpd, direction, reaction,
                 gene_names.get(ere.enzyme_id),
+                solubility_meta,
             ),
         ))
 
@@ -1275,11 +1372,14 @@ async def build_compound_scope_payload(
     if not edge_rows:
         return GraphPayload(), [], 0
 
-    gene_names = await _load_gene_names(db, {ere.enzyme_id for ere, _ in edge_rows})
+    row_enzyme_ids = {ere.enzyme_id for ere, _ in edge_rows}
+    gene_names = await _load_gene_names(db, row_enzyme_ids)
+    solubility_meta = await _load_solubility_meta(db, row_enzyme_ids)
     payload = await _ere_rows_to_graph_payload(
         db,
         edge_rows,
         gene_names,
+        solubility_meta,
         limit_nodes=limit_nodes,
         center_id=center_anchor,
     )

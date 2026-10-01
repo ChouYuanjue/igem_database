@@ -84,3 +84,23 @@ Thumbs.db
 /_ab_*.json
 /_pool_*.json
 /st_*.json
+
+# ---------------------------------------------------------------------------
+# 仓库根目录的一次性探针脚本 + MySQL 运维脚本 + 数据库备份。
+# 见 docs/wiki/database-protocol.md §2.3（开发产物清点）。
+# ---------------------------------------------------------------------------
+# 必须锚定到根目录: 裸 `_*.py` 会连 backend/app/models/_enums.py 和所有
+# __init__.py 一起忽略掉，`_*.json` 会误伤 update_tool/_allnodes_inchikey.json
+# （那个是仓库跟踪的真实数据）。
+/_*.py
+# 4 个 .ps1 是 MySQL 的 datadir/tmpdir/buffer-pool 运维脚本。2026-10-01 之前
+# 其中两个硬编码着本机 root 密码，已改为读 $env:IGEM_DB_PASSWORD；但脚本本身
+# 写死了 D:\MYSQL\、D:\MySQLData 等本机路径，且 _drop_old_datadir.ps1 会不可逆
+# 删除一个 datadir —— 不进仓库。§9 第 0 步按 §3.2 的步骤做，不依赖这些脚本。
+/_*.ps1
+/_*.log
+# 备份目录: _db_backup/ 里单个 .sql 就有 1.0GB，超 GitHub 100MB 硬限
+/_db_backup/
+/_dbbackup/
+/_pre_merge_backup_*/
+/mysqldata_copy.log

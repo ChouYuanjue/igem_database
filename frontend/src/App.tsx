@@ -22,6 +22,9 @@ import { SearchResultsPage } from './pages/SearchResultsPage'
 import { getExternalRecordUrl, isExportableKind, looksLikeProteinSequence, matchesFilters } from './lib/entities'
 import type { FilterState, SearchKind, View } from './lib/entities'
 import type { Entity } from './types'
+import { isBlastSession, isEntity, isRecord, isString, isStringArray, useCachedState } from './lib/browserCache'
+import { useAppRoute } from './lib/routes'
+import type { MapSearchRoute } from './lib/routes'
 
 let entities = mockEntities
 let filterOptions = mockFilterOptions
@@ -38,31 +41,49 @@ const navigation = [
 ] as const
 
 function App() {
-  const [view, setView] = useState<View>('home')
-  const [query, setQuery] = useState('')
-  const [searchKind, setSearchKind] = useState<SearchKind>('all')
-  const [selectedId, setSelectedId] = useState<string | null>('CHEBI:15377')
-  const [selectedSpecies, setSelectedSpecies] = useState(filterOptions.species[0])
-  const [selectedClass, setSelectedClass] = useState(filterOptions.classes[0])
-  const [selectedFamily, setSelectedFamily] = useState(filterOptions.families[0])
+  const { route, navigate, goBack } = useAppRoute()
+  const view = route.view
+  const [cachedQuery, setQuery] = useCachedState('query', '', isString)
+  const query = view === 'search' ? route.query ?? '' : cachedQuery
+  const [searchKind, setSearchKind] = useCachedState<SearchKind>('searchKind', 'all', (value): value is SearchKind => isString(value) && ['all', 'compound', 'enzyme', 'reaction', 'pathway'].includes(value))
+  const selectedId = route.enzymeId ?? null
+  const [selectedSpecies, setSelectedSpecies] = useCachedState('species', filterOptions.species[0], isString)
+  const [selectedClass, setSelectedClass] = useCachedState('compoundClass', filterOptions.classes[0], isString)
+  const [selectedFamily, setSelectedFamily] = useCachedState('enzymeFamily', filterOptions.families[0], isString)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [downloadedIds, setDownloadedIds] = useState<string[]>([])
-  const [queuedEntitiesById, setQueuedEntitiesById] = useState<Record<string, Entity>>({})
+  const [downloadedIds, setDownloadedIds] = useCachedState<string[]>('downloadedIds', [], isStringArray)
+  const [queuedEntitiesById, setQueuedEntitiesById] = useCachedState<Record<string, Entity>>('queuedEntities', {}, (value): value is Record<string, Entity> => isRecord(value) && Object.entries(value).every(([id, entity]) => isEntity(entity) && entity.id === id))
   const [datasetRevision, setDatasetRevision] = useState(0)
-  const [autoMapSearch, setAutoMapSearch] = useState<{ query: string; mode: 'enzyme' | 'pathway'; nonce: number } | null>(null)
+  /**
+   * 首页地图现在是**常驻**的（离开首页只隐藏、不卸载），所以它内部的 scope/通路
+   * 现场不会自己消失 —— `resetHome` 想清干净就必须显式通知它一次。
+   * 递增值；地图侧靠比对 nonce 只执行一次。
+   */
+  const [mapResetNonce, setMapResetNonce] = useState(0)
+  /**
+   * 地图检索的「再来一次」计数器。URL 决定**跑什么**，它决定**何时再跑一遍**：
+   * 同一个词连按两次回车时目标 URL 与当前地址一模一样，`navigate` 会提前 return，
+   * 光比对规格发现不了第二次提交。
+   */
+  const [mapSearchNonce, setMapSearchNonce] = useState(0)
   const [blastOpen, setBlastOpen] = useState(false)
   /** Last completed BLAST run, shown through the keyword-search table/map result views. */
-  const [blastSession, setBlastSession] = useState<BlastSession | null>(null)
+  const [blastSession, setBlastSession] = useCachedState<BlastSession | null>('blastSession', null, isBlastSession)
   /** One-shot hand-off telling the home map to scope itself to the active BLAST session. */
   const [autoBlastScope, setAutoBlastScope] = useState<{ sessionId: number; nonce: number } | null>(null)
   /**
    * 搜索集（search set）：**检索范围**，不是显示筛选。空数组 = 全部 ——
    * 沿用全仓库「空数组即不过滤」的约定（没有 `all` 哨兵值）。
    *
-   * 刻意不给 localStorage：用户选的是「会话内跨页保持」，刷新浏览器回到「全部」。
    * 它管的是取数，不管下载 —— 下载路径一行都不看这个值。
    */
-  const [searchSet, setSearchSet] = useState<string[]>([])
+  const [searchSet, setSearchSet] = useCachedState<string[]>('searchSet', [], isStringArray)
+
+  useEffect(() => {
+    setSidebarOpen(false)
+    setBlastOpen(false)
+    if (route.view === 'search') setQuery(route.query ?? '')
+  }, [route, setQuery])
 
   useEffect(() => {
     let cancelled = false
@@ -76,11 +97,9 @@ function App() {
         graphEdges = dataset.graphEdges
         graphNodes = dataset.graphNodes
 
-        setSelectedSpecies(dataset.filterOptions.species[0] || mockFilterOptions.species[0])
-        setSelectedClass(dataset.filterOptions.classes[0] || mockFilterOptions.classes[0])
-        setSelectedFamily(dataset.filterOptions.families[0] || mockFilterOptions.families[0])
-        setSelectedId((current) => (current && dataset.entities.some((entity) => entity.id === current) ? current : dataset.entities[0]?.id ?? null))
-        setDownloadedIds((current) => current.filter((id) => dataset.entities.some((entity) => entity.id === id)))
+        setSelectedSpecies((current) => dataset.filterOptions.species.includes(current) ? current : dataset.filterOptions.species[0] || mockFilterOptions.species[0])
+        setSelectedClass((current) => dataset.filterOptions.classes.includes(current) ? current : dataset.filterOptions.classes[0] || mockFilterOptions.classes[0])
+        setSelectedFamily((current) => dataset.filterOptions.families.includes(current) ? current : dataset.filterOptions.families[0] || mockFilterOptions.families[0])
         setDatasetRevision((revision) => revision + 1)
       })
       .catch((error) => {
@@ -116,8 +135,9 @@ function App() {
   const visibleEdgeCount = graphEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)).length
 
   const rememberQueuedEntity = (entry: QueueEntry) => {
-    if (typeof entry === 'string' || getEntity(entry.id)) return
-    setQueuedEntitiesById((current) => ({ ...current, [entry.id]: entry }))
+    const entity = typeof entry === 'string' ? getEntity(entry) : entry
+    if (!entity) return
+    setQueuedEntitiesById((current) => ({ ...current, [entity.id]: entity }))
   }
 
   const forgetQueuedEntity = (id: string) => {
@@ -198,9 +218,13 @@ function App() {
   }
 
 
-  const goTo = (nextView: View, id?: string) => {
-    setView(nextView)
-    if (id) setSelectedId(id)
+  const goTo = (nextView: View, id?: string, options?: { query?: string; blast?: boolean }) => {
+    navigate({
+      view: nextView === 'structure' ? 'home' : nextView,
+      enzymeId: nextView === 'enzyme' ? id : undefined,
+      query: nextView === 'search' ? options?.query ?? query : undefined,
+      blast: nextView === 'search' ? options?.blast ?? Boolean(blastSession) : undefined,
+    })
     setSidebarOpen(false)
   }
 
@@ -232,7 +256,7 @@ function App() {
       setAutoBlastScope({ sessionId: session.id, nonce: Date.now() })
       goTo('home')
     } else {
-      goTo('search')
+      goTo('search', undefined, { blast: true })
     }
   }
 
@@ -264,7 +288,30 @@ function App() {
     exitBlastSession()
     setQuery(nextQuery || '')
     setSearchKind(looksLikeProteinSequence(nextQuery || '') ? 'enzyme' : 'all')
-    goTo('search')
+    goTo('search', undefined, { query: nextQuery || '', blast: false })
+  }
+
+  /** The home map's search, as handed to it: `undefined` while another view is
+   *  up (no signal — the resident map must keep whatever it was showing),
+   *  `null` on a plain home, and the spec itself when a search is addressed. */
+  const mapSearch = view === 'home' ? route.mapSearch ?? null : undefined
+
+  /**
+   * The one place a map search reaches the address bar. The map is a consumer,
+   * not a second writer: it asks for a spec, this navigates, and the route comes
+   * back down as `mapSearch`.
+   *
+   * `null`撤掉检索。撤掉时用 replace 还是 push 取决于当前在哪: 已经在首页时这是
+   * 一次原地更正, 不该留一条能退回旧检索的记录; 从别的页面回来则是一次真正的
+   * 导航, 用 replace 会把那条记录本身抹掉(后退就跳过它了)。
+   */
+  const runMapSearch = (spec: MapSearchRoute | null) => {
+    if (!spec) {
+      navigate({ view: 'home', mapSearch: null }, view === 'home')
+      return
+    }
+    setMapSearchNonce((nonce) => nonce + 1)
+    navigate({ view: 'home', mapSearch: spec })
   }
 
   /** Hand a query to the home map — the Map half of every page's Map|Table
@@ -278,8 +325,11 @@ function App() {
   const openMapSearch = (nextQuery: string, mode: 'enzyme' | 'pathway' = 'enzyme') => {
     exitBlastSession()
     const trimmed = (nextQuery || '').trim()
-    setAutoMapSearch(trimmed || mode === 'pathway' ? { query: trimmed, mode, nonce: Date.now() } : null)
-    goTo('home')
+    if (!trimmed && mode === 'enzyme') {
+      runMapSearch(null)
+      return
+    }
+    runMapSearch({ mode: trimmed ? 'enzyme' : 'pathway', query: trimmed, start: '', end: '', via: [] })
   }
 
   const clearFilters = () => {
@@ -293,12 +343,40 @@ function App() {
   /** Brand click: land on the plain browse home map with every piece of search
    *  state — keyword query, filters, BLAST session and pending auto-scopes —
    *  dropped. The map's own compound-scope/edge selection is cleared by the
-   *  map component itself (it owns that state). */
+   *  map component itself (it owns that state) — but since the map stays
+   *  mounted now, that no longer happens by itself on remount, so we hand it
+   *  an explicit reset signal. See `mapResetNonce`. */
   const resetHome = () => {
     exitBlastSession()
-    setAutoMapSearch(null)
     clearFilters()
+    setMapResetNonce((nonce) => nonce + 1)
     goTo('home')
+  }
+
+  /**
+   * Changing the search set changes what every scope/pathway result *means*, so
+   * the map drops its whole search现场。URL 上那条 `?q=` 必须跟着退掉, 否则刷新
+   * 会复活一次范围已经对不上的检索。
+   * `replace`, not push: 换集不是一次可后悔的导航, 不该留一条能退回旧 URL 的记录。
+   * (On an enzyme page `route.mapSearch` is `undefined`, so nothing happens there
+   * — the map is not the surface being looked at.)
+   */
+  const handleSearchSetChange = (next: string[]) => {
+    setSearchSet(next)
+    if (route.mapSearch) navigate({ view: 'home', mapSearch: null }, true)
+  }
+
+  /**
+   * The enzyme page's Back. Popping the real history entry is the whole point:
+   * `goTo` pushes, which left the stack as ['/', '/enzymes/X', '/'] — pressing
+   * Back put a second '/' on top and the browser's own Back then walked straight
+   * into the enzyme page again. When there is nothing in-app behind us (the URL
+   * was opened directly), replace instead, so no stale entry is left over.
+   */
+  const goHomeFromBack = () => {
+    if (goBack()) return
+    setSidebarOpen(false)
+    navigate({ view: 'home' }, true)
   }
 
   // The workspace sidebar only renders on views that keep the workspace chrome,
@@ -391,43 +469,42 @@ function App() {
           </div>
         </header>}
 
-        {view === 'home' && (
-          <HomePage
-            queueCount={queueCount}
-            entityCount={entities.length}
-            nodeCount={visibleNodeCount}
-            edgeCount={visibleEdgeCount}
-            downloadedItems={downloadedItems}
-            onOpenSearch={(nextQuery) => {
-              const nextSearch = nextQuery || ''
-              exitBlastSession()
-              setQuery(nextSearch)
-              setSearchKind(looksLikeProteinSequence(nextSearch) ? 'enzyme' : 'all')
-              goTo('search')
-            }}
-            onOpenDownloads={() => goTo('downloads')}
-            onOpenEnzyme={(id) => goTo('enzyme', id)}
-            onOpenBlast={openBlast}
-            onOpenBlastTable={openBlastTable}
-            onToggleQueue={toggleQueue}
-            onQueueMany={queueEntities}
-            openRecord={openRecord}
-            isQueued={(id) => queuedIds.has(id)}
-            autoMapSearch={autoMapSearch}
-            onAutoMapSearchConsumed={() => setAutoMapSearch(null)}
-            blastSession={blastSession}
-            autoBlastScope={autoBlastScope}
-            onAutoBlastScopeConsumed={consumeBlastScope}
-            onResetHome={resetHome}
-            searchSet={searchSet}
-            onSearchSetChange={setSearchSet}
-          />
-        )}
+        {/* The map is mounted for the whole session and merely hidden off-home.
+            Unmounting it used to throw away everything the user had set up —
+            the pathway results they were reading, the camera, the selections —
+            so coming back from an enzyme page landed on a blank map. */}
+        <HomePage
+          hidden={view !== 'home'}
+          resetNonce={mapResetNonce}
+          queueCount={queueCount}
+          entityCount={entities.length}
+          nodeCount={visibleNodeCount}
+          edgeCount={visibleEdgeCount}
+          downloadedItems={downloadedItems}
+          onOpenSearch={(nextQuery) => openLibrarySearch(nextQuery || '')}
+          onOpenDownloads={() => goTo('downloads')}
+          onOpenEnzyme={(id) => goTo('enzyme', id)}
+          onOpenBlast={openBlast}
+          onOpenBlastTable={openBlastTable}
+          onToggleQueue={toggleQueue}
+          onQueueMany={queueEntities}
+          openRecord={openRecord}
+          isQueued={(id) => queuedIds.has(id)}
+          mapSearch={mapSearch}
+          mapSearchNonce={mapSearchNonce}
+          onMapSearch={runMapSearch}
+          blastSession={blastSession}
+          autoBlastScope={autoBlastScope}
+          onAutoBlastScopeConsumed={consumeBlastScope}
+          onResetHome={resetHome}
+          searchSet={searchSet}
+          onSearchSetChange={handleSearchSetChange}
+        />
 
         {view === 'enzyme' && (
           <EnzymeDetailView
             enzymeId={selectedId}
-            onBack={() => goTo('home')}
+            onBack={goHomeFromBack}
             onToggleQueue={toggleQueue}
             isQueued={(id) => queuedIds.has(id)}
             queueCount={queueCount}
@@ -438,14 +515,14 @@ function App() {
             onOpenMap={(nextQuery) => openMapSearch(nextQuery)}
             onOpenPathwaySearch={() => openMapSearch('', 'pathway')}
             searchSet={searchSet}
-            onSearchSetChange={setSearchSet}
+            onSearchSetChange={handleSearchSetChange}
           />
         )}
 
         {view === 'search' && (
           <SearchResultsPage
             query={query}
-            setQuery={setQuery}
+            setQuery={openLibrarySearch}
             onOpenMap={(nextQuery) => openMapSearch(nextQuery)}
             onOpenPathwaySearch={() => openMapSearch('', 'pathway')}
             onOpenDownloads={() => goTo('downloads')}
@@ -454,12 +531,15 @@ function App() {
             onToggleQueue={toggleQueue}
             isQueued={(id) => queuedIds.has(id)}
             queueCount={queueCount}
-            blastSession={blastSession}
-            onExitBlast={exitBlastSession}
+            blastSession={route.blast ? blastSession : null}
+            onExitBlast={() => {
+              exitBlastSession()
+              navigate({ view: 'search', query }, true)
+            }}
             onOpenBlastMap={openBlastMap}
             onResetHome={resetHome}
             searchSet={searchSet}
-            onSearchSetChange={setSearchSet}
+            onSearchSetChange={handleSearchSetChange}
           />
         )}
 

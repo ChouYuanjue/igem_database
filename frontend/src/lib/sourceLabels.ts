@@ -54,14 +54,29 @@ export function sourceOptions(fromApi?: string[] | null, seen?: Iterable<string>
  * showing the full enum here is the same mistake as taking the organism list
  * from the whole table. Falls back to the API list before the graph has loaded.
  * Order follows `fromApi` so the chips do not reshuffle as the graph changes.
+ *
+ * `within` is an optional **hard boundary**: pass the active search set and only
+ * sources inside it are offered. The fallback above is deliberately skipped when
+ * a boundary is set — the API list is the whole enum, so falling back to it on an
+ * empty graph would offer `ai_literature` / `manual_literature` (0 rows anywhere)
+ * plus whatever source the search set excludes. An empty result is the honest
+ * answer there: the map carries nothing to filter by.
  */
 export function sourceOptionsFromUnits(
   fromApi: string[] | null | undefined,
   seen: Iterable<string>,
+  within?: Iterable<string> | null,
 ): string[] {
-  const present = [...new Set(seen)].filter(Boolean)
-  if (present.length === 0) return sourceOptions(fromApi)
-  const order = fromApi && fromApi.length > 0 ? fromApi : DEFAULT_SOURCE_ORDER
+  const boundary = within ? new Set(within) : null
+  const present = [...new Set(seen)].filter(
+    (value) => Boolean(value) && (!boundary || boundary.has(value)),
+  )
+  if (present.length === 0) return boundary ? [] : sourceOptions(fromApi)
+  const order = boundary
+    ? [...boundary]
+    : fromApi && fromApi.length > 0
+      ? fromApi
+      : DEFAULT_SOURCE_ORDER
   const rank = (value: string) => {
     const index = order.indexOf(value)
     return index < 0 ? order.length : index

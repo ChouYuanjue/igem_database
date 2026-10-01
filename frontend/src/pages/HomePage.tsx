@@ -1,8 +1,11 @@
 import { CompoundGraphHome } from '../graphExperience'
 import type { BlastSession } from '../api'
 import type { Entity } from '../types'
+import type { MapSearchRoute } from '../lib/routes'
 
 export function HomePage({
+  hidden,
+  resetNonce,
   queueCount,
   entityCount: _entityCount,
   nodeCount: _nodeCount,
@@ -17,8 +20,9 @@ export function HomePage({
   onQueueMany,
   openRecord: _openRecord,
   isQueued,
-  autoMapSearch,
-  onAutoMapSearchConsumed,
+  mapSearch,
+  mapSearchNonce,
+  onMapSearch,
   blastSession,
   autoBlastScope,
   onAutoBlastScopeConsumed,
@@ -26,6 +30,10 @@ export function HomePage({
   searchSet,
   onSearchSetChange,
 }: {
+  /** The map stays mounted across routes; this only takes it out of the layout. */
+  hidden?: boolean
+  /** Bumped by App's `resetHome`; the map watches it to drop its own scope state. */
+  resetNonce?: number
   queueCount: number
   entityCount: number
   nodeCount: number
@@ -41,8 +49,12 @@ export function HomePage({
   onQueueMany: (entries: Entity[]) => void
   openRecord: (entity: Entity) => void
   isQueued: (id: string) => boolean
-  autoMapSearch?: { query: string; mode: 'enzyme' | 'pathway'; nonce: number } | null
-  onAutoMapSearchConsumed?: () => void
+  /** URL 上的检索规格 (`undefined` = 不在首页, 无信号; `null` = 裸首页)。 */
+  mapSearch?: MapSearchRoute | null
+  /** 同一个规格再提交一次时递增; 只由它触发重跑。 */
+  mapSearchNonce?: number
+  /** 地图请求把一次检索写进 URL (App 负责导航, 地图只消费结果)。 */
+  onMapSearch?: (spec: MapSearchRoute | null) => void
   /** Last completed BLAST run; lets the map render the hit enzymes as a scope subgraph. */
   blastSession?: BlastSession | null
   autoBlastScope?: { sessionId: number; nonce: number } | null
@@ -55,6 +67,8 @@ export function HomePage({
 }) {
   return (
     <CompoundGraphHome
+      hidden={hidden}
+      resetNonce={resetNonce}
       onOpenSearch={onOpenSearch}
       onOpenDownloads={onOpenDownloads}
       onOpenEnzyme={onOpenEnzyme}
@@ -64,8 +78,9 @@ export function HomePage({
       onQueueMany={onQueueMany}
       isQueued={isQueued}
       queueCount={queueCount}
-      autoMapSearch={autoMapSearch}
-      onAutoMapSearchConsumed={onAutoMapSearchConsumed}
+      mapSearch={mapSearch}
+      mapSearchNonce={mapSearchNonce}
+      onMapSearch={onMapSearch}
       blastSession={blastSession}
       autoBlastScope={autoBlastScope}
       onAutoBlastScopeConsumed={onAutoBlastScopeConsumed}

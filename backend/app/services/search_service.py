@@ -10,7 +10,7 @@ from sqlalchemy import text, select
 from sqlalchemy.sql import text as sa_text
 from sqlalchemy.exc import ProgrammingError, OperationalError
 
-from app.models import Enzyme, Gene, Reaction, EnzymeReactionEdge
+from app.models import Enzyme, Gene, Reaction, EnzymeReactionEdge, EnzymeSolubilityScore
 from app.schemas.enzyme import EnzymeCard, TableEnzymeCard
 from app.schemas.common import Pagination
 from app.utils.query_parser import parse_query, SearchClause, SearchCondition, detect_input_type
@@ -307,11 +307,31 @@ async def _aggregate_table_cards(
         if edge.source_type:
             source_by_enzyme[eid].add(_enum_value(edge.source_type))
 
+    # 模型参考分 + 膜三态。`isoform_id IS NULL` 取的是 canonical 序列那条 ——
+    # 不带这个谓词, 有变体的酶会一次返回多行, 分不清哪个是酶本身的分。
+    score_by_enzyme: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
+    sol_result = await db.execute(
+        select(
+            EnzymeSolubilityScore.enzyme_id,
+            EnzymeSolubilityScore.deep_solnet_score,
+            EnzymeSolubilityScore.membrane,
+        ).where(
+            EnzymeSolubilityScore.enzyme_id.in_(enzyme_ids),
+            EnzymeSolubilityScore.isoform_id.is_(None),
+        )
+    )
+    for row in sol_result.all():
+        score_by_enzyme[row.enzyme_id] = (
+            float(row.deep_solnet_score) if row.deep_solnet_score is not None else None,
+            row.membrane,
+        )
+
     cards: List[TableEnzymeCard] = []
     for eid in enzyme_ids:
         enz = enzymes.get(eid)
         if not enz:
             continue
+        score, membrane = score_by_enzyme.get(eid, (None, None))
         cards.append(TableEnzymeCard(
             enzyme_id=eid,
             primary_name=enz.primary_name,
@@ -321,6 +341,8 @@ async def _aggregate_table_cards(
             ec_numbers=sorted(ec_by_enzyme[eid], key=_ec_sort_key),
             source_types=sorted(source_by_enzyme[eid]),
             reaction_count=len(reaction_by_enzyme[eid]),
+            deep_solnet_score=score,
+            membrane=membrane,
         ))
 
     return cards

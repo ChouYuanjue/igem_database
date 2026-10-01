@@ -492,6 +492,10 @@ export type HomeGraphEnzymeCard = {
   reactionDirection: string
   sourceType: string
   reviewStatus: string
+  /** 模型参考分。**不是**可溶性标签，也不是校准过的概率 —— UI 文案别写 "solubility"。 */
+  deepSolnetScore?: number | null
+  /** `'membrane'` / `'non-membrane'` / `'unannotated'`。只有 `'membrane'` 豁免分数阈值。 */
+  membrane?: string | null
 }
 
 export type HomeGraphEdge = {
@@ -515,6 +519,9 @@ export type HomeGraphEdgeGroupItem = {
   organismName?: string | null
   sourceType?: string | null
   reviewStatus?: string | null
+  /** 不点开复合边也要能按分数筛，所以这两项跟着**每条子边**一起来。 */
+  deepSolnetScore?: number | null
+  membrane?: string | null
 }
 
 export type HomeGraphEdgeGroup = {
@@ -522,7 +529,10 @@ export type HomeGraphEdgeGroup = {
   sourceCompoundId: string
   targetCompoundId: string
   label: string
+  /** 记录数（一个 edge_id 一条）。**不是** `label` 里那个 N。 */
   count: number
+  /** `label` 里那个 N：**不同的酶**个数。同一个酶用两条反应催化同一对化合物时 count=2 而这里是 1。 */
+  enzymeCount: number
   edgeIds: string[]
   items?: HomeGraphEdgeGroupItem[] | null
 }
@@ -585,6 +595,8 @@ export type EnzymeIsoformSequence = {
   canonicalLength?: number | null
   canonicalMass?: string | null
   sequence?: string | null
+  /** 该变体自己的模型参考分。全库只有 30 条真变体有 —— 其余是 null，不渲染。 */
+  deepSolnetScore?: number | null
 }
 
 export type EnzymeReactionDetail = {
@@ -619,6 +631,9 @@ export type EnzymeDetailData = {
    *  referenced it (see the backend's `EnzymeDetail` docstring). */
   sourceType?: string | null
   reviewStatus?: string | null
+  /** canonical 序列的模型参考分 + 膜三态。见 `HomeGraphEnzymeCard` 上的同名说明。 */
+  deepSolnetScore?: number | null
+  membrane?: string | null
   gene?: EnzymeGeneDetail | null
   sequenceLinks: EnzymeSequenceLink[]
   goTerms: EnzymeGoTerm[]
@@ -702,6 +717,8 @@ export type TableEnzymeRow = {
   ecNumbers: string[]
   sourceTypes: string[]
   reactionCount: number
+  deepSolnetScore?: number | null
+  membrane?: string | null
 }
 
 export type TableEnzymePayload = {
@@ -839,7 +856,7 @@ export async function mapScopeSearch(params: MapScopeParams): Promise<MapScopeRe
 export async function loadHomeGraph(options: HomeGraphRequest = {}): Promise<HomeGraphData> {
   const params = new URLSearchParams({
     depth: String(options.depth ?? 1),
-    limit_nodes: String(options.limitNodes ?? (options.centerCompoundId ? 42 : 120)),
+    limit_nodes: String(options.limitNodes ?? (options.centerCompoundId ? 42 : 300)),
   })
   if (options.centerCompoundId) params.set('center_compound_id', options.centerCompoundId)
   if (!options.centerCompoundId) params.set('selection_mode', options.selectionMode ?? 'global')

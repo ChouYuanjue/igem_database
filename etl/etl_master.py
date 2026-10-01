@@ -34,6 +34,7 @@ REFERENCES_FILE = 'for_enzyme_detail/child_tables/uniprotkb_references.tsv'
 SEQ_LINKS_FILE = 'for_enzyme_detail/child_tables/uniprotkb_sequence_links.tsv'
 GO_FILE = 'for_enzyme_detail/child_tables/uniprotkb_go.tsv'
 ISOFORM_FILE = 'for_enzyme_detail/child_tables/uniprotkb_isoform_sequences.tsv'
+SOLUBILITY_FILE = 'for_enzyme_detail/child_tables/uniprotkb_solubility_score.tsv'
 
 # evidence 表没有 source_type, 但它的来源由 enzyme 决定 -> 审核状态跟着酶走。
 SOURCE_TO_REVIEW = {'swiss_prot': 'official', 'trembl': 'pending'}
@@ -494,13 +495,108 @@ def load_isoforms(only=None):
     print(f"  isoforms: {len(isoform_df)} rows inserted")
 
 
+def _true_variant_isoform_ids():
+    """「序列与 canonical 确实不同」的 isoform_id 集合。
+
+    与 blast_service._isoform_subject_query 用的是**同一条谓词** —— 系统里只应有
+    一个「什么算真变体」的定义, 那边是 BLAST 主体库, 这边是分数入库。
+
+    源表里 56 条 isoform 记录有 26 条的 id 是 `-1`(UniProt 的 canonical 编号),
+    序列与 canonical 逐字符相同, 分数只差在第六位小数(实测最大 Δ 0.000004)——
+    同一序列重跑的浮点噪声, 不是另一个生物学实体。前端读取一律走
+    `isoform_id IS NULL`, 所以那 26 行即使入库也永远读不到, 不如不写。
+    """
+    df = pd.read_sql(
+        "SELECT DISTINCT isoform_id FROM enzyme_isoform "
+        "WHERE sequence IS NOT NULL "
+        "  AND (canonical_sequence IS NULL OR sequence != canonical_sequence)",
+        engine,
+    )
+    return {str(v) for v in df["isoform_id"].dropna()}
+
+
+def load_solubility_scores(only=None):
+    """Load per-enzyme model score + membrane annotation.
+
+    ⚠️ 必须排在 load_isoforms() **之后** —— 下面的真变体过滤要查 enzyme_isoform。
+    """
+    _ensure_table(schema_ddl('enzyme_solubility_score'))
+    df = read_segmented(SOLUBILITY_FILE, only=only, dtype=str)
+
+    enzyme_map = pd.read_sql("SELECT enzyme_id, uniprot_id FROM enzyme", engine)
+    entry_to_id = dict(zip(enzyme_map["uniprot_id"], enzyme_map["enzyme_id"]))
+
+    true_variants = _true_variant_isoform_ids()
+
+    rows = []
+    no_enzyme = bad_score = dropped_redundant = 0
+    for _, row in df.iterrows():
+        enzyme_id = entry_to_id.get(_clean_value(row.get("Entry")))
+        if not enzyme_id:
+            no_enzyme += 1
+            continue
+
+        # ⚠️ 与 load_isoforms 相反: isoform_id 为空**正是 canonical 行**, 不能跳过 ——
+        # 照抄那边的 `if not isoform_id: continue` 会丢掉全部 canonical 数据。
+        # 空值写 None(不是 ''), 前端读的是 `isoform_id IS NULL`。
+        isoform_id = _clean_value(row.get("Isoform_ID"))
+        if isoform_id and isoform_id not in true_variants:
+            dropped_redundant += 1
+            continue
+
+        raw_score = _clean_value(row.get("DeepSolNet Score"))
+        try:
+            score = float(raw_score) if raw_score is not None else None
+        except (TypeError, ValueError):
+            score = None
+        if score is None:
+            bad_score += 1
+            continue
+
+        rows.append({
+            "enzyme_id": enzyme_id,
+            "isoform_id": isoform_id,
+            "deep_solnet_score": score,
+            "membrane": _clean_value(row.get("Membrane")),
+            "membrane_evidence": _clean_value(row.get("Membrane Evidence")),
+            "sequence_length": _clean_int(row.get("Sequence Length")),
+        })
+
+    if not rows:
+        print("  solubility scores: no rows to insert")
+        return
+
+    # 按 (enzyme_id, isoform_id) 去重: 下游 `_load_solubility_meta` 是建成字典按 enzyme_id
+    # 索引的, 重复键会**静默后者覆盖前者**。源数据核验过是 1:1, 这里只是把它变成显式的。
+    score_df = pd.DataFrame(rows)
+    keys = ["enzyme_id", "isoform_id"]
+    before = len(score_df)
+    score_df = score_df.drop_duplicates(subset=keys, keep="first")
+    if len(score_df) != before:
+        print(f"  solubility scores: ⚠️ 按 {keys} 去掉了 {before - len(score_df)} 条重复键")
+
+    cols = ["enzyme_id", "isoform_id", "deep_solnet_score", "membrane",
+            "membrane_evidence", "sequence_length"]
+    with engine.begin() as conn:
+        score_df[cols].to_sql("enzyme_solubility_score", conn,
+                              if_exists="append", index=False)
+
+    canonical = int(score_df["isoform_id"].isna().sum())
+    print(f"  solubility scores: {len(score_df)} rows inserted "
+          f"(canonical {canonical}, 真变体 {len(score_df) - canonical})")
+    print(f"  solubility scores: 跳过 —— 无对应酶 {no_enzyme}, 冗余/未登记 isoform "
+          f"{dropped_redundant}, 分数缺失或非法 {bad_score}")
+
+
 def run(only=None):
     update_enzyme_from_master(only=only)
     load_gene_info(only=only)
     load_sequence_links(only=only)
     load_evidence(only=only)
     load_go_terms(only=only)
+    # 必须在 load_isoforms 之后: load_solubility_scores 靠 enzyme_isoform 判真变体。
     load_isoforms(only=only)
+    load_solubility_scores(only=only)
 
 
 if __name__ == "__main__":

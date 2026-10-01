@@ -373,8 +373,38 @@
 
 /* ---------- Home filter sidebar (organism + data source) ---------- */
 
+/* 侧栏内容固定约 620px，窗口矮于 ~860px 就装不下。基础样式给的是 `overflow: visible`
+   和可压缩的网格行，结果是「Graph controls」那一行（它的 min-height 被重置成 0）被压成
+   0 高、里面 40px 的按钮溢出去盖在「Clear selection」上 —— 1280×800 实测如此，
+   1400×900 才正常。改成滚动，并且把行高钉住不让它压扁。 */
 .home-map-page .graph-filter-sidebar {
   width: 216px;
+  overflow: hidden auto;
+  scrollbar-width: thin;
+}
+
+.home-map-page .graph-filter-sidebar .mapping-pill {
+  min-height: 40px;
+}
+
+/* 纵向节奏：筛选组之间是 .home-filter-group 的 margin 撑出的 16px，底下那几个菜单行
+   却只有 grid 的 2px，整条侧栏上松下紧。这里把三处「块边界」补到同一档 16px
+   （间距 = 上一项的 margin-bottom + grid gap 2px + 这一项的 margin-top），
+   菜单列表内部仍保持 2px 的紧排。 */
+.home-map-page .graph-filter-sidebar .home-filter-group {
+  margin: 7px 10px;
+}
+
+.home-map-page .graph-filter-sidebar > .mapping-pill {
+  margin-top: 6px;
+}
+
+.home-map-page .graph-filter-sidebar > .graph-zoom-controls {
+  margin-top: 14px;
+}
+
+.home-map-page .graph-filter-sidebar > .download-pill {
+  margin-top: 12px;
 }
 
 .home-filter-head {
@@ -422,6 +452,122 @@
   color: rgba(248, 251, 255, 0.62);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+/* 筛选器里的说明行。`.home-filter-empty` 是居中的「没数据」占位，语义和留白都不对，
+   所以这里单开一条 —— 膜豁免是**行为上的意外**（阈值拉到 0.9 仍看得见 0.28 的蛋白），
+   必须写在屏幕上，不能只挂在 title 里。 */
+.home-filter-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(248, 251, 255, 0.48);
+}
+
+/* 「Solubility score」标签 + 旁边那个问号。标签本身是 uppercase 11px，换成这句话后
+   比原来的 "Membrane" 宽约 55px，加上问号仍在 196px 内容宽里（实测见下），所以两件
+   事共用一行、不换行。 */
+.home-filter-label-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.home-filter-label-row .home-filter-label {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.home-filter-help {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(248, 251, 255, 0.45);
+  cursor: pointer;
+}
+
+.home-filter-help:hover,
+.home-filter-help.is-open {
+  color: var(--teal);
+}
+
+/* 说明卡片。**不能探出侧栏**：`.home-map-page .graph-filter-sidebar` 是
+   `overflow: hidden auto`，超出右边的部分会被直接裁掉，连滚都滚不到。所以和同组的
+   `.home-filter-menu` 用同一套定位 —— absolute + left:0 + width:100%，盖在下面
+   的 chip 上，而不是把侧栏撑宽。 */
+.home-filter-help-card {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  width: 100%;
+  padding: 9px 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #16283c, #101f30);
+  box-shadow: 0 24px 50px rgba(8, 26, 58, 0.5);
+}
+
+.home-filter-help-title {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.home-filter-help-body {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(248, 251, 255, 0.68);
+}
+
+/* 膜蛋白 / 非膜蛋白两档。侧栏写死 216px、内容宽只有 194px，两个 chip 并排要 209px
+   —— 放不下，会被挤成参差的两行。所以竖排铺满，与上面的物种 chip 同一套排法
+   （.home-species-chips 就是这么做的）。 */
+.home-membrane-chips {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+/* 「Non-membrane」这一支：chip 在上、它的从属层（分数滑块）在下，所以这一支自己
+   是一个纵向列。和另一支「Membrane」并列为兄弟。 */
+.home-membrane-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 「Non-membrane」那一档的从属层（分数滑块挂在这里）。做成有底色的子面板，而不是
+   只画一条淡竖线 —— 竖线在这个宽度里太轻，读不出从属关系，用户会以为滑块对两档
+   都生效，然后奇怪为什么膜蛋白筛不掉。 */
+.home-filter-subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 10px;
+  margin-right: 4px;
+  padding: 8px 6px 8px 8px;
+  border-left: 2px solid rgba(237, 227, 175, 0.45);
+  border-radius: 0 6px 6px 0;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+/* 「Non-membrane」没点亮时滑块没有作用对象 —— 置灰停用，别让它看起来还能拖。 */
+.home-filter-subgroup.is-disabled {
+  opacity: 0.45;
+}
+
+.home-filter-subgroup.is-disabled .control-slider {
+  cursor: not-allowed;
 }
 
 .home-filter-select {
@@ -767,19 +913,42 @@
   color: var(--graph-navy, #081a3a);
   font-weight: 700;
   letter-spacing: 0.02em;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  /* ⚠️ 这一格**不能是 flex**。app.css 给 `.home-map-stats span` 配了
+     `overflow:hidden; text-overflow:ellipsis; white-space:nowrap`, 但
+     `text-overflow` 对 **flex 容器**不生效 —— 一 flex, 文本就成了匿名 flex item,
+     省略号不再作用到它身上, 长 query 被硬切在列边界(没有 `…`), 看起来像被遮挡。
+     实测(2026-10-01): 通路查询那一格内容 606px 塞进 276px 的列, 截断但无省略号。
+     改回文档流后省略号才会出现, 所以这里用 `display:block` + 下面 ::before 的
+     inline-block 对齐, 而不是 flex + align-items。 */
+  display: block;
 }
 
 .home-map-page .home-map-stats .home-stats-scope::before {
   content: '';
+  /* 非 flex 布局下, 这个圆点靠 inline-block + vertical-align 与文字对齐 */
+  display: inline-block;
   width: 9px;
   height: 9px;
+  margin-right: 6px;
+  vertical-align: middle;
   border-radius: 50%;
   background: #2f9e68;
   box-shadow: 0 0 0 3px rgba(47, 158, 104, 0.18);
-  flex: 0 0 auto;
+}
+
+/* 四个 scope 分支都只渲染 **3 个 span**(查看 graphExperience.tsx:2971/2977/2983/2994),
+   且 `.home-stats-scope` 恒为第一个; 只有不带 scope 的默认分支是 4 个 span, 也没有这个类。
+   所以 `:has(.home-stats-scope)` 精确等价于「这一排是 3 格」, 不会误伤默认分支。
+   而 app.css 的轨道是 `repeat(4, ...)` —— 通路分支那第 4 格**永远是空的**,
+   第 1 格却在截断。实测(2026-10-01, 1366 视口): 4 等分每格 276px, 而真实 query
+   `Pathways · "CHEBI:60374 → CHEBI:15440"` 要 406px, 长 query 要 586px —— 都在硬切。
+   改成「第 1 格吃掉剩余, 两格计数各按内容宽」后, 第 1 格 754px(够装 586px),
+   两格计数仍是各自需要的 181 / 187px, 三格全不截断。
+   `auto` 轨道的尺寸由内容决定, 长 query 只会挤压自己那一格, 不会把计数挤没。 */
+@media (min-width: 761px) {
+  .home-map-page .home-map-stats:has(.home-stats-scope) {
+    grid-template-columns: minmax(0, 2fr) auto auto;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -812,13 +981,49 @@
   align-items: center;
   width: fit-content;
   margin: 0 0 6px;
-  padding: 1px 8px;
+  /* 1px 6px, 不是 1px 8px —— 见下面 score chip 的注释, 两个 chip 同款必须同 padding。 */
+  padding: 1px 6px;
   border: 1px solid rgba(114, 224, 196, 0.45);
   border-radius: 999px;
   background: rgba(114, 224, 196, 0.14);
   color: #9beacf;
   font: 600 10px/1.6 Inter, ui-sans-serif, system-ui, sans-serif;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+/* 模型参考分 chip。和上面的 E-value chip 同款，只是挂甲色以便和 E-value 区分开
+   （两个 chip 会在同一条卡片上同时出现）。膜蛋白在文案里加 `· membrane` ——
+   卡片上要说明的正是「它为什么没被阈值筛掉」。
+
+   ⚠️ 宽度是**在浏览器里量出来的**，别随手改 padding / 文案 / letter-spacing。
+   卡片栈 `min(430px, 100vw-210px)` 下有个真实卡片量得：**文案列只有 202px**
+   （按 CSS 手算会得到 204，差 2px，别信手算）。卡片上最长的那条
+   `DeepSolNet Score 0.991 · membrane` 在本机字体下量得：
+
+     1px 8px + 0.01em  = 207.5px   超 5.5px
+     1px 6px + 0.01em  = 203.5px   超 1.5px
+     1px 6px + 0     = 200.4px   装得下, 余 1.6px   ← 现在这组
+
+   本机实测**装了 Inter**（`document.fonts.check` = true），且 Inter 比 Segoe UI /
+   Arial 都宽（189.5 vs 170 / 174），所以上面是最大情形，换台机器只会更窄。
+   超出的后果不是溢出可见，而是被 `.enzyme-card-copy > span` 的
+   `word-break: break-word` 在词中间折断，变成两行胶囊 —— 所以
+   `white-space: nowrap` 是必须的：万一还差几 px，它顶进旁边 12px 的列间距里（看不出来），
+   而不是把 `membrane` 折成 `membra` / `ne`。 */
+.home-map-page .enzyme-card .enzyme-card-score-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin: 0 0 6px;
+  padding: 1px 6px;
+  border: 1px solid rgba(237, 227, 175, 0.45);
+  border-radius: 999px;
+  background: rgba(237, 227, 175, 0.14);
+  color: #f0e2ac;
+  font: 600 10px/1.6 Inter, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 /* ---------------------------------------------------------------------------
@@ -871,6 +1076,19 @@
 
 .home-map-page button.atlas-brand .atlas-logo {
   transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+}
+
+/* 品牌图标换成了真正的 logo（`frontend/public/starase-atlas-logo.png`）。
+   该文件是透明底的，图案自带 4 个内边距，所以给 3px 的 padding 让它别贴着
+   `.atlas-logo` 那圈金色描边；`object-fit: contain` 保证 30px（首页地图）
+   和 36px（其它页顶栏）两个尺寸下都不变形。
+   外框（金边 + 淡金底）和 hover 态都沿用原来的 `.atlas-logo`，没有另起一套。 */
+.atlas-logo-mark {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 3px;
+  object-fit: contain;
 }
 
 .home-map-page button.atlas-brand:hover .atlas-logo {
@@ -1124,6 +1342,36 @@
   border-color: rgba(237, 227, 175, 0.9);
 }
 
+/* Start ⇄ End 互换。挨着 End 胶囊而不是放进下面的 actions 行 —— 互换属于这对
+   端点，不属于「Add via / Find pathways」那组动作。尺寸与 `.pw-slot-chip` 同高，
+   两种状态共 30/32px 会让这一行参差。 */
+.pw-swap-ends {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(237, 227, 175, 0.4);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(236, 246, 255, 0.82);
+  cursor: pointer;
+}
+
+.pw-swap-ends:not(:disabled):hover {
+  color: var(--graph-gold, #f0e5b2);
+  border-color: rgba(237, 227, 175, 0.9);
+  background: rgba(237, 227, 175, 0.16);
+}
+
+/* 两端都空时互换是空操作 —— 置灰而不是让它无声地什么都不做。只填了一端仍然可用。 */
+.pw-swap-ends:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .pw-composer-hint {
   color: rgba(236, 246, 255, 0.5);
   font-size: 11px;
@@ -1181,7 +1429,8 @@
   left: auto;
   width: min(470px, calc(100vw - 340px));
   max-height: calc(100vh - 298px);
-  padding: 16px 14px 14px;
+  /* 与 `.home-map-page .live-*` 一致：标题栏走普通流，不再为它预留顶部内边距。 */
+  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1275,9 +1524,12 @@
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: rgba(8, 26, 58, 0.85);
+  /* 原来是 85% 透明度的藏青 + 淡金 11px：白卡片透上来后圆底被冲淡成蓝灰，
+     金字压在上面就发闷、看不出是「第几步」。改成实底藏青 + 满不透明度淡金、
+     字号提到 12px —— 同一套色板，只是不再透。对比度 13.3:1。 */
+  background: var(--graph-navy, #081a3a);
   color: var(--graph-gold, #f0e5b2);
-  font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif;
+  font: 700 12px/1 Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
 .pathway-row-main {
@@ -1847,6 +2099,10 @@
   font: 600 12px/1.3 Inter, ui-sans-serif, system-ui, sans-serif;
   color: #0e1726;
   min-width: 0;
+  /* 「A → B」两端的化合物名。含空格的常规名字本身就会折行，这两行是兜底：
+     整串没有可断点的名字（连字符/空格都没有时）不至于横向顶到「已选 N」上。 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .pw-drawer-step-arrow {
@@ -2150,4 +2406,17 @@
 .merged-drawer-more small {
   color: rgba(8, 26, 58, 0.5);
   font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   首页地图常驻。地图在整个会话里都挂载着, 离开首页只是把它移出布局 ——
+   这样从酶详情页/检索页回来时, 通路结果、相机、选中、筛选全都还在。
+   ⚠️ 必须是 `display: none`, 不能用 `visibility: hidden` 或挪到屏幕外:
+   根节点被 app.css 钉了 `height: 100vh`, 那两种写法会留下一个占满视口
+   但看不见的块, 把内页顶下去。`display: none` 才真正把它从布局里拿掉。
+   加 `!important` 是因为后面还有 table-results.css / enzyme-atlas.css 两层,
+   将来谁给 `.home-map-page` 写一条 `display` 都不该把隐藏顶掉。
+--------------------------------------------------------------------------- */
+.home-map-page.map-hidden {
+  display: none !important;
 }

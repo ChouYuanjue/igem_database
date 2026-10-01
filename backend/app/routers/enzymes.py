@@ -6,7 +6,7 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from app.deps import get_db
 from app.models import (
     Enzyme, Gene, GeneSequenceLink, EnzymeGoTerm, EnzymeIsoform, Evidence,
-    EnzymeReactionEdge, Reaction, ReactionCompound, Compound,
+    EnzymeReactionEdge, Reaction, ReactionCompound, Compound, EnzymeSolubilityScore,
 )
 from app.schemas.common import ApiResponse
 from app.schemas.enzyme import EnzymeDetail, EnzymeReactionItem, ExternalLink, GoTerm, IsoformSequence
@@ -112,6 +112,26 @@ async def get_enzyme_detail(
             for go in go_result.scalars()
         ]
 
+    # 模型参考分 + 膜注释。一次查询同时覆盖酶级(canonical)行与各变体行 ——
+    # 表里 `isoform_id IS NULL` 的就是 canonical 序列的分。
+    # 全库只有 30 条真变体有分, 所以 score_by_isoform 绝大多数时候是空的。
+    enzyme_score = None
+    enzyme_membrane = None
+    score_by_isoform: dict = {}
+    if await _table_exists(db, "enzyme_solubility_score"):
+        sol_result = await db.execute(
+            select(EnzymeSolubilityScore)
+            .where(EnzymeSolubilityScore.enzyme_id == enzyme_values["enzyme_id"])
+            .order_by(EnzymeSolubilityScore.solubility_record_id)
+        )
+        for sol in sol_result.scalars():
+            score = float(sol.deep_solnet_score) if sol.deep_solnet_score is not None else None
+            if sol.isoform_id is None:
+                enzyme_score = score
+                enzyme_membrane = sol.membrane
+            else:
+                score_by_isoform[sol.isoform_id] = score
+
     isoforms = []
     if await _table_exists(db, "enzyme_isoform"):
         isoform_result = await db.execute(
@@ -128,6 +148,8 @@ async def get_enzyme_detail(
                 canonical_length=iso.canonical_length,
                 canonical_mass=iso.canonical_mass,
                 sequence=iso.sequence,
+                # 按 isoform_id 直接组装, 不让前端做 id 匹配。
+                deep_solnet_score=score_by_isoform.get(iso.isoform_id),
             )
             for iso in isoform_result.scalars()
         ]
@@ -204,6 +226,8 @@ async def get_enzyme_detail(
         mass=enzyme_values["mass"],
         source_type=enzyme_values["source_type"],
         review_status=enzyme_values["review_status"],
+        deep_solnet_score=enzyme_score,
+        membrane=enzyme_membrane,
         gene=gene_summary,
         sequence_links=sequence_links,
         go_terms=go_terms,

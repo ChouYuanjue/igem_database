@@ -25,6 +25,9 @@ export type PathwayEnzymeChoice = {
   name: string
   organismName?: string | null
   sourceType?: string | null
+  /** 模型参考分 + 膜三态，从 backing edge/card 上抄下来供显示与下载。 */
+  deepSolnetScore?: number | null
+  membrane?: string | null
 }
 
 /** Per-step chosen enzymes on an enzyme-picked pathway record. ``step`` is 1-based
