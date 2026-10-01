@@ -46,7 +46,13 @@ Thumbs.db
 
 # Local tooling / runtime dirs not part of the mirror
 .claude/
+# BLAST+ 是本机装好的外部工具链(Windows x64 版 375MB / 54 个 .exe), 不是我们产出的数据。
+# 它绑死平台, 而 NCBI 页面上点一下就能下 —— 进历史只会让每个克隆永久多背 375MB, 且
+# Linux/macOS 的人下了也跑不了。§3.4 让使用者自己装, 用 IGEM_BLAST_BIN_DIR 指过来。
+# （§3.4 原先写着「我们随附了一份」, 与这条规则自相矛盾, 2026-10-01 已改成「不在本仓库」。）
 /backend/blast_bin/
+# blast_work 是 makeblastdb 的运行时产物(索引 .psq/.phr + subject FASTA, 198MB)。后端按
+# subject 集合的签名缓存复用, 库里的数据一变它就作废 —— 第一次跑 BLAST 时自行重建。
 /backend/blast_work/
 /backend/.env
 

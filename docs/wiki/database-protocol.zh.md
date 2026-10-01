@@ -61,7 +61,7 @@
 | `for_*/` | 第①、②段之间的交接 TSV——见 §2.2 |
 | `etl/` | 第②段——`etl_run.py` 与六个阶段模块 |
 | `sql/schema.sql` | 建表语句的唯一真相源 |
-| `backend/` | 第③段——FastAPI 服务;随附的 BLAST+ 在 `blast_bin/`,BLAST 工作目录在 `blast_work/`,生成的导出文件在 `app/downloads/` |
+| `backend/` | 第③段——FastAPI 服务;BLAST+ 在 `blast_bin/`(**不在本仓库**,见 §3.4),BLAST 工作目录在 `blast_work/`,生成的导出文件在 `app/downloads/` |
 | `frontend/` | 第④段——React + Vite 单页应用 |
 | `tools/` | `fix_mysql_timestamp_defaults.sql`——一次性的表结构修补 |
 | `docs/` | 本协议 |
@@ -178,8 +178,9 @@ innodb_buffer_pool_instances=1
 - 默认值是相对后端启动目录的 `blast_bin/`(我们的启动方式是从 `backend/` 目录启动,所以默认落在
   `backend/blast_bin/`)。
 - 换成任意位置都行,用 `IGEM_BLAST_BIN_DIR` 指向它即可;文件缺失时后端会明确报错,不会静默失败。
-- 我们在 `backend/blast_bin/bin/` 随附了一份 Windows 64 位构建。解压后的 NCBI 归档(可执行文件在
-  嵌套的 `bin/` 里)和扁平布局都支持。
+- 可执行文件**不在本仓库里**。一份 BLAST+ 构建约 375 MB,且绑死在一个平台上——所以该带走的是
+  下载地址,不是二进制本身,请下载对应自己系统的版本。两种布局都支持:解压后的 NCBI 归档
+  (可执行文件在嵌套的 `bin/` 里),以及扁平的目录。
 
 工作目录(FASTA 与 `makeblastdb` 产物)默认是相对启动目录的 `blast_work/`,可用
 `IGEM_BLAST_WORK_DIR` 覆盖。
@@ -581,7 +582,7 @@ available under the MIT license",Hugging Face 上的权重标为 `mit` 且 `gate
 | **Rhea** | CC BY 4.0(SIB / EMBL-EBI) |
 | **ChEBI** | CC BY 4.0(EMBL-EBI) |
 | **DDBJ** | 见 DDBJ 使用条款——**发布前需确认** |
-| **NCBI BLAST+** | NCBI 以公有领域软件分发——**发布前需在 NCBI 页面确认** |
+| **NCBI BLAST+** | NCBI 以公有领域软件分发。**本仓库不再分发它**——由使用者自行下载(§3.4) |
 
 CC BY 4.0 附带署名要求:请注明相应的联盟/机构。
 

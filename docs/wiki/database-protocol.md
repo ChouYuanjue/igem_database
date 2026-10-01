@@ -66,7 +66,7 @@ none of which is needed to run anything).
 | `for_*/` | The hand-off TSVs between stages 1 and 2 — see §2.2 |
 | `etl/` | Stage 2 — `etl_run.py` and the six stage modules |
 | `sql/schema.sql` | The single source of truth for DDL |
-| `backend/` | Stage 3 — FastAPI service; bundled BLAST+ at `blast_bin/`, BLAST scratch at `blast_work/`, generated exports at `app/downloads/` |
+| `backend/` | Stage 3 — FastAPI service; BLAST+ at `blast_bin/` (**not in this repo** — see §3.4), BLAST scratch at `blast_work/`, generated exports at `app/downloads/` |
 | `frontend/` | Stage 4 — React + Vite single-page app |
 | `tools/` | `fix_mysql_timestamp_defaults.sql` — a one-off schema repair |
 | `docs/` | This protocol |
@@ -197,8 +197,10 @@ directory differs per machine, so it must be given explicitly:**
   so the default resolves to `backend/blast_bin/`).
 - Point `IGEM_BLAST_BIN_DIR` anywhere else if you prefer. When the files are missing the backend
   raises a clear error rather than failing silently.
-- We ship a Windows 64-bit build at `backend/blast_bin/bin/`. An unpacked NCBI archive (binaries in
-  a nested `bin/`) and a flat layout are both accepted.
+- The executables are **not in this repository**. A BLAST+ build is ~375 MB and is tied to one
+  platform, so carry the download link rather than the binaries and fetch the build for your own
+  OS. Both layouts are accepted — an unpacked NCBI archive (executables in a nested `bin/`) and a
+  flat directory of executables.
 
 The work directory (FASTA and `makeblastdb` output) defaults to `blast_work/` relative to the launch
 directory, overridable with `IGEM_BLAST_WORK_DIR`.
@@ -645,7 +647,7 @@ which restricts harmful biological/chemical uses — it does not restrict commer
 | **Rhea** | CC BY 4.0 (SIB / EMBL-EBI) |
 | **ChEBI** | CC BY 4.0 (EMBL-EBI) |
 | **DDBJ** | See DDBJ's terms of use — **confirm before publishing** |
-| **NCBI BLAST+** | Distributed by NCBI as public-domain software — **confirm on NCBI's page before publishing** |
+| **NCBI BLAST+** | Public-domain software from NCBI. **Not redistributed here** — users download it themselves (§3.4) |
 
 Attribution requirements apply under CC BY 4.0: credit the respective consortium.
 
