@@ -51,8 +51,21 @@ there is no copyright restricting use or redistribution.
 ### Ketcher
 `frontend/public/ketcher_standalone/` is a prebuilt Ketcher distribution (EPAM
 Systems, Apache License 2.0 — https://github.com/epam/ketcher), used for structure
-drawing and structure search. The build's own `*.LICENSE.txt` files are kept
-alongside it and list the licences of the libraries bundled inside it.
+drawing and structure search.
+
+Two kinds of notice travel with it, and they cover different things:
+
+- **Ketcher's own NOTICE** — reproduced verbatim at
+  `frontend/public/ketcher_standalone/NOTICE`. Apache License 2.0 §4(d) requires a
+  redistributor to pass on the attribution notices of the upstream work. That file
+  was **not** included in the prebuilt bundle we received; we fetched it from the
+  EPAM repository and put it next to the copy we ship.
+- **The bundled libraries** — the build's `*.LICENSE.txt` sidecars, kept alongside
+  it, list the licences of the libraries webpack pulled in (lodash, React, Three.js,
+  Miew, object-assign, buffer, crc32.js, regenerator-runtime,
+  url-search-params-polyfill). These are *not* Ketcher's own licence text; Ketcher
+  itself is covered by the repository's root [`LICENSE`](LICENSE), which is Apache
+  License 2.0 — the same licence EPAM distributes it under.
 
 ### DeepSolNet / ESM C 300M
 The per-enzyme solubility scores in
@@ -65,9 +78,20 @@ terms of both and the date they were checked.
 ## Not redistributed
 
 ### NCBI BLAST+
-Sequence homology search runs a locally installed NCBI BLAST+ (public-domain
-software from NCBI) as a subprocess. The executables are **not** in this
-repository — see `docs/wiki/database-protocol.md` §3.4 for how to install them.
+Sequence homology search runs a locally installed NCBI BLAST+ as a subprocess.
+
+NCBI distributes BLAST+ under a **Public Domain Notice**: it is a "United States
+Government Work", written as part of the authors' official duties, and therefore
+**cannot be copyrighted** — the notice states that NLM and the U.S. Government "have
+not placed any restriction on its use or reproduction". No licence or permission is
+needed to use it. NCBI does ask that the authors be cited in work based on it, and
+we do so here.
+
+The executables are **not** in this repository; each user downloads the build for
+their own platform — see `docs/wiki/database-protocol.md` §3.4. That page also tells
+you to keep the `LICENSE` file that ships inside the NCBI archive: if you go on to
+redistribute BLAST+ yourself, that file is the notice you need to pass along, and the
+archive's copy of it — not a paraphrase — is the authoritative one.
 
 ## Corrections
 

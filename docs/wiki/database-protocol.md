@@ -205,10 +205,17 @@ directory differs per machine, so it must be given explicitly:**
   so the default resolves to `backend/blast_bin/`).
 - Point `IGEM_BLAST_BIN_DIR` anywhere else if you prefer. When the files are missing the backend
   raises a clear error rather than failing silently.
-- The executables are **not in this repository**. A BLAST+ build is ~375 MB and is tied to one
-  platform, so carry the download link rather than the binaries and fetch the build for your own
-  OS. Both layouts are accepted — an unpacked NCBI archive (executables in a nested `bin/`) and a
-  flat directory of executables.
+- The executables are **not in this repository**. A BLAST+ build is several hundred MB unpacked and
+  is tied to one platform, so carry the download link rather than the binaries and fetch the build
+  for your own OS. Both layouts are accepted — an unpacked NCBI archive (executables in a nested
+  `bin/`) and a flat directory of executables.
+- **Keep the `LICENSE` file from the archive.** It sits at the top level of the NCBI download, beside
+  the `bin/` directory. You do not need it to *run* BLAST+ — the software is a U.S. Government work
+  and carries no copyright — but if your project redistributes BLAST+ in any form, that file is the
+  notice you are expected to pass along, and the archive's own copy is the authoritative one. It is
+  easy to lose: extracting only `bin/` (which is what a "point the backend at the executables"
+  instruction invites) drops it, and then you are left paraphrasing terms you no longer hold.
+  [`NOTICE`](../../NOTICE) records what NCBI's terms say as of 2026-10-02.
 
 The work directory (FASTA and `makeblastdb` output) defaults to `blast_work/` relative to the launch
 directory, overridable with `IGEM_BLAST_WORK_DIR`.
