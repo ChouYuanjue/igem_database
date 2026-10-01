@@ -1,0 +1,75 @@
+# Third-party notices
+
+This repository combines our own work with material derived from third-party
+sources. This file records what came from where and under what terms.
+
+It is also the **attribution statement** required by the CC BY 4.0 licence that
+covers the data and documentation in this repository (see `LICENSE-DATA`).
+
+## Licence map
+
+| Part | Licence | Full text |
+|---|---|---|
+| Source code — `backend/`, `frontend/`, `etl/`, `update_tool/`, `tools/`, `sql/` | Apache License 2.0 | [`LICENSE`](LICENSE) |
+| Data and documentation — `for_*/`, `docs/`, `*.docx`, `*.png`, `*.json` | CC BY 4.0 | [`LICENSE-DATA`](LICENSE-DATA) |
+
+## Upstream data
+
+The tables under `for_*/` are derived from the sources below. Where the source is
+licensed CC BY 4.0, the credit line that licence requires is given with the entry.
+
+### UniProt — CC BY 4.0
+UniProt Consortium — https://www.uniprot.org
+
+The enzyme, gene, GO, isoform, reference, sequence-link and solubility tables are
+derived from UniProtKB (Swiss-Prot and TrEMBL) exports, retrieved with
+`update_tool/download_uniprot.py` and reshaped by `update_tool/update_database.py`.
+
+### Rhea — CC BY 4.0
+SIB Swiss Institute of Bioinformatics / EMBL-EBI — https://www.rhea-db.org
+
+Reaction equations, physiological direction, EC numbers and reaction SMILES are
+derived from the Rhea SPARQL endpoint.
+
+### ChEBI — CC BY 4.0
+EMBL-EBI — https://www.ebi.ac.uk/chebi
+
+SMILES and InChIKey mappings are derived from the ChEBI flat-file release.
+`update_tool/chebi_data/curation_overrides.tsv` is our own manual curation layered
+on top of it.
+
+### DDBJ / INSDC — no use restrictions
+https://www.ddbj.nig.ac.jp
+
+Nucleotide sequence links are looked up through `getentry.ddbj.nig.ac.jp`. DDBJ and
+the other INSDC partners state that they place no restrictions on the use or
+redistribution of published nucleotide sequence data; DDBJ records explicitly that
+there is no copyright restricting use or redistribution.
+
+## Bundled third-party software
+
+### Ketcher
+`frontend/public/ketcher_standalone/` is a prebuilt Ketcher distribution (EPAM
+Systems, Apache License 2.0 — https://github.com/epam/ketcher), used for structure
+drawing and structure search. The build's own `*.LICENSE.txt` files are kept
+alongside it and list the licences of the libraries bundled inside it.
+
+### DeepSolNet / ESM C 300M
+The per-enzyme solubility scores in
+`for_enzyme_detail/child_tables/uniprotkb_solubility_score.*.tsv` were produced by
+DeepSolNet (https://github.com/wangxinglong1990/DeepSolNet), which builds on ESM C
+300M. We store the resulting scores as data; neither the tool nor the model weights
+are redistributed here. `docs/wiki/database-protocol.md` §12.2 records the current
+terms of both and the date they were checked.
+
+## Not redistributed
+
+### NCBI BLAST+
+Sequence homology search runs a locally installed NCBI BLAST+ (public-domain
+software from NCBI) as a subprocess. The executables are **not** in this
+repository — see `docs/wiki/database-protocol.md` §3.4 for how to install them.
+
+## Corrections
+
+If you believe material here is attributed incorrectly or used without permission,
+please open an issue and we will fix or remove it.

@@ -19,7 +19,7 @@ NJU-CHINA 参加 IGEM 比赛的专用数据库。以萜类合酶及相关化合�
 - **Python 3.10+**（含 pip）
 - **MySQL 8.0+**
 - **Node.js 20+**（前端用；以 `frontend/package.json` 的 `engines` 为准）
-- 磁盘：**稳态运行约 5 GB**；全量重建建议预留 **25 GB 以上**（实测明细见 `docs/PROTOCOL.md` §2.1）
+- 磁盘：**稳态运行约 5 GB**；全量重建建议预留 **25 GB 以上**（实测明细见 [`docs/wiki/database-protocol.md`](docs/wiki/database-protocol.md) §3.1）
 
 ---
 
@@ -42,13 +42,39 @@ innodb_buffer_pool_instances=1
 而全量 ETL 会产生多 GB 临时文件；C 盘一旦满，ETL 会在第 6 步以
 `OS errno 28 - No space left on device` 崩掉，且只跑到一半。
 
-仓库根目录有三个**幂等**的 PowerShell 脚本可以做这件事（各自需要一次 UAC 点击）：
+> **这三件事本仓库不提供脚本。** 我们当初是在本机写的 PowerShell 脚本，但它们绑死了
+> 那台机器的盘符与 MySQL 安装路径（`D:\MYSQL\bin\mysql.exe`、服务名 `MYSQL80`），
+> 而且其中删旧 datadir 的一步不可逆 —— 不适合随仓库分发。要做的操作本身如下，
+> 在**管理员权限**的 PowerShell 里逐条执行即可。
 
-| 脚本 | 作用 |
-|---|---|
-| `_move_mysql_datadir.ps1` | 把 datadir 搬到 `D:\MySQLData`（复制校验通过前不改 my.ini） |
-| `_mysql_tmpdir.ps1` | my.ini 里补 `tmpdir=D:/MySQLData/tmp` 并重启服务 |
-| `_mysql_buffer_pool.ps1` | 把缓冲池落盘成 2 GB / 1 实例并重启服务 |
+**① 把 datadir 搬离 C 盘**
+
+```powershell
+Stop-Service MYSQL80 -Force
+robocopy 'C:\ProgramData\MySQL\MySQL Server 8.0\Data' 'D:\MySQLData' /MIR /COPYALL /XJ /R:1 /W:1
+# 比对两边的「文件数 + 总字节」；不一致就到此为止，Start-Service 退回原状
+# 一致 → 备份 my.ini，把 datadir= 改成 datadir=D:/MySQLData
+icacls 'D:\MySQLData' /grant 'NT AUTHORITY\NetworkService:(OI)(CI)F' /T
+Start-Service MYSQL80
+```
+
+服务起来、应用能正常读之后，**再人工删除 C 盘那份旧目录**（这一步不可逆，别提前做）。
+
+> `my.ini` 是 **UTF-8 无 BOM**，且注释里有一个 U+2212 减号。编辑时要用
+> `New-Object System.Text.UTF8Encoding($false)` 读写；按 ASCII 重写会把那个字符悄悄换成 `?`。
+
+**② 给 `[mysqld]` 补 `tmpdir`** —— 先建好目录，再加一行，然后重启服务：
+
+```ini
+tmpdir=D:/MySQLData/tmp
+```
+
+**③ 缓冲池落盘** —— 同样加进 `[mysqld]` 再重启服务：
+
+```ini
+innodb_buffer_pool_size=2G
+innodb_buffer_pool_instances=1
+```
 
 改完确认一遍：
 
@@ -316,19 +342,21 @@ cd etl && python -u etl_run.py --source=trembl
 
 ## 验证
 
-仓库根目录的 `_*.py` 是**只读探针**（不写库、不改文件），改动后按需跑：
+我们开发时用一组**只读探针**（不写库、不改文件）守着管线，改动后按需跑。
+**它们不在本仓库里** —— 每个都要连上本机的 `igem_terpene` 库和 `for_*/` 才能跑，
+路径写死在开发机上。下表说明每个探针验的是什么，方便你自己写一个：
 
-| 探针 | 验什么 |
+> 命名约定：打印耗时、累积 `failures` 列表、非零退出、末尾打印 `ALL CHECKS PASSED`。
+> Windows 控制台是 GBK，跑之前设 `PYTHONIOENCODING=utf-8`。
+
+| 检查项 | 验什么 |
 |---|---|
-| `_pipeline_seam_probe.py` | 全链条贯通：产出 ↔ `for_*/` 逐字节、**ETL 自己的读取层**解析到几个文件读回多少行、文件 ↔ 库逐表对齐 |
-| `_idmap_rerun_probe.py` | 编号保留：活映射 → 全部沿用；空映射 → 全部重分配；退休号不回收 |
-| `_repro_diff.py` | 把同一份 `for_*/` 重灌进另一个库，与真库**逐行**比（按稳定身份 `uniprot_id` 对齐、多重集相等） |
-| `_searchset_probe.py` | 检索 / 搜索集的划分性、total 真实性、EC 与物种下推等价 |
-| `_blast_subjects_probe.py` | BLAST 计数接口 == 真跑一次的 `searchedSubjects` |
-| `_verify_graph.py` | 首页图 payload 与基线逐项一致 |
-
-约定：打印耗时、累积 `failures` 列表、非零退出、末尾打印 `ALL CHECKS PASSED`。
-Windows 控制台是 GBK，跑之前设 `PYTHONIOENCODING=utf-8`。
+| 全链条贯通 | 产出 ↔ `for_*/` 逐字节、**ETL 自己的读取层**解析到几个文件读回多少行、文件 ↔ 库逐表对齐 |
+| 编号保留 | 活映射 → 全部沿用；空映射 → 全部重分配；退休号不回收 |
+| 重灌比对 | 把同一份 `for_*/` 重灌进另一个库，与真库**逐行**比（按稳定身份 `uniprot_id` 对齐、多重集相等） |
+| 搜索集 | 检索 / 搜索集的划分性、total 真实性、EC 与物种下推等价 |
+| BLAST 计数 | BLAST 计数接口 == 真跑一次的 `searchedSubjects` |
+| 首页图 payload | 与基线逐项一致 |
 
 部署后的人工冒烟：
 
@@ -353,7 +381,7 @@ Windows 控制台是 GBK，跑之前设 `PYTHONIOENCODING=utf-8`。
 ## 项目结构
 
 ```
-igem_database-try-to-merge/
+igem_database/
 ├── sql/schema.sql                  # 建表脚本（15 张表 + 索引；ETL 灌其中的 14 张）
 ├── update_tool/                    # 数据获取与重建工作流
 │   ├── download_uniprot.py         # ① 下载 + 本地按 Reviewed 拆段
@@ -376,10 +404,13 @@ igem_database-try-to-merge/
 ├── for_enzyme_detail/              # 落盘的 TSV（分段带 .<source> 后缀）
 ├── for_enzyme_reation_card/
 ├── for_compound_card/
-├── for_graph/
-├── _db_backup/                     # mysqldump 备份
-└── _*.py                           # 只读验证探针
+└── for_graph/
 ```
+
+下面这些**不在仓库里**，是本机跑起来才会出现的（全都在 `.gitignore` 里）：
+`backend/.env`（数据库密码）、`backend/blast_bin/` 与 `backend/blast_work/`（§3.4）、
+`update_tool/_src/` 与 `_merged/`（中间产物）、`_db_backup/`（mysqldump 备份）、
+以及开发时那组只读验证探针（见上）。
 
 `update_tool/` 的隔离原则：**只读**原始目录与 `chebi_data/`，全部输出写到自己的目录。
 **绝对不要修改原始文件夹里的任何文件。**
@@ -473,3 +504,17 @@ igem_database-try-to-merge/
 - **问**：ETL 看起来卡住了？
   **答**：先看日志的 mtime。机器待机也会冻结进程（不是死锁）；跑的时候加 `-u`，
   避免把"输出憋在缓冲区"误判成卡住。
+
+---
+
+## 许可与署名
+
+| 部分 | 许可 | 全文 |
+|---|---|---|
+| 源代码（`backend/` `frontend/` `etl/` `update_tool/` `tools/` `sql/`） | Apache License 2.0 | [`LICENSE`](LICENSE) |
+| 派生的表（`for_*/`）与文档（`docs/`、`.docx`、`.png`、`.json`） | CC BY 4.0 | [`LICENSE-DATA`](LICENSE-DATA) |
+
+上游数据（UniProt / Rhea / ChEBI / DDBJ）与随附的第三方软件（Ketcher 等）的署名、
+以及 NCBI BLAST+ 为何**不**在本仓库内分发,都记在 [`NOTICE`](NOTICE)。
+数据与文档采用 CC BY 4.0,也就是上游数据源自己的许可 —— 复用本库时请保留其中的署名。
+详细说明见 [`docs/wiki/database-protocol.md`](docs/wiki/database-protocol.md) §12。

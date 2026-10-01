@@ -66,6 +66,7 @@
 | `tools/` | `fix_mysql_timestamp_defaults.sql`——一次性的表结构修补 |
 | `docs/` | 本协议 |
 | `README.md` | 运维手册:环境要求、部署顺序、起服务命令,以及 MySQL / uvicorn 的坑 |
+| `LICENSE`、`LICENSE-DATA`、`NOTICE` | 两个许可的全文,以及第三方署名声明——见 §12 |
 
 ### 2.2 交接数据(`for_*/`)
 
@@ -86,11 +87,15 @@
 
 下面这些是我们**建库和验证**时用的。**跑流水线或 Web 应用都不需要**,也不计入 §3.1 的磁盘数字。
 
+**它们也都不在本仓库里。** 这一节记的是我们工作区里有什么,不是仓库跟踪了哪些文件——下面每一组
+都被 `.gitignore` 排除。之所以还留着这一节,是因为本页引用的那些测量数字就是这些脚本跑出来的;
+哪怕不随仓库分发,读者也该知道它们是什么。
+
 | 组 | 数量 | 是什么 |
 |---|---|---|
 | 根目录 `_*.py` | 24 | 调试期间随手写的探针与测量脚本——A/B 抓取、索引与前缀检查、ETL 接缝探针、图谱与检索集探针、性能跑分。没有任何代码 import 它们。 |
 | 根目录 `_*.json` | 9 | 上述探针写出的测量快照(前后对照、缓冲池对比)。 |
-| 根目录 `_*.ps1` | 4 | **MySQL 配置脚本**——`_move_mysql_datadir.ps1`、`_mysql_tmpdir.ps1`、`_mysql_buffer_pool.ps1`、`_drop_old_datadir.ps1`。这四个是例外:**它们确实有运维用途**,就是 §9 的第 0 步。每个都幂等,每个都需要一次 UAC 授权。 |
+| 根目录 `_*.ps1` | 4 | **MySQL 配置脚本**——`_move_mysql_datadir.ps1`、`_mysql_tmpdir.ps1`、`_mysql_buffer_pool.ps1`、`_drop_old_datadir.ps1`。唯一一组**确实有运维用途**、而非随手丢掉的:它们在本机就是 §9 的第 0 步。但仍不在仓库里——它们写死了那台机器的盘符、MySQL 安装路径和服务名,而 `_drop_old_datadir.ps1` 会不可逆地删掉一个数据目录。§9 已把这三件事完整写成步骤,不依赖这一组里的任何东西。 |
 | `_db_backup/`、`_dbbackup/`、`_pre_merge_backup_<时间戳>/` | — | 数据库转储,**合计约 1.2 GB** |
 | `_mysql_move.log`、`mysqldata_copy.log` | — | MySQL 目录搬移的日志 |
 | `ge60.json`、`graph_full.json`、`group_edges.json`、`st_600.json`、`st_2000.json` | 5 | 更多测量输出(这几个只是碰巧没有下划线前缀) |
@@ -101,8 +106,8 @@
 (`IGEM_DATA_DIR` 指向的沙箱树,§3.5)、`_t/`、`_deploy_backup/`——以及 `chebi_data/`
 (含 `curation_overrides.tsv`)和 `child_tables/`。
 
-这些我们特意没有清理掉:探针和它们抓下来的输出,正是我们验证流水线的方式,本页引用的那些测量
-数字就是从它们来的。
+这些在本机上我们特意没有清理掉:探针和它们抓下来的输出,正是我们验证流水线的方式。
+它们不属于我们对外发布的内容。
 
 ---
 
@@ -547,8 +552,21 @@ for_enzyme_detail/child_tables/uniprotkb_solubility_score.trembl.tsv
 
 ### 12.1 我们自己的代码与派生数据
 
-> **TODO——待团队决定。** 我们尚未为自己写的代码和派生的表选定许可。发布本页前请先定下来,
-> 并在此处写明。
+我们自己的产出按「代码 / 数据」拆成两个许可:
+
+| 部分 | 许可 | 全文 |
+|---|---|---|
+| 源代码——`backend/`、`frontend/`、`etl/`、`update_tool/`、`tools/`、`sql/` | **Apache License 2.0** | [`LICENSE`](../../LICENSE) |
+| 派生的表——`for_*/`;以及文档——`docs/`、`.docx` 设计文档、`.png` 图片、JSON 数据文件 | **Creative Commons Attribution 4.0 International(CC BY 4.0)** | [`LICENSE-DATA`](../../LICENSE-DATA) |
+
+用两个而不是一个,是因为这是两类不同的产出:代码用带明确专利授权的软件许可;数据用
+**与上游数据源同一个**许可,这样从流水线这头到那头署名链条是连续的。
+
+**在 CC BY 4.0 下,你可以共享和改编这些数据,包括商用**,条件是要给出适当的署名、链到
+许可原文、并注明是否做过修改。上游各源要求的署名行集中记在 [`NOTICE`](../../NOTICE) ——
+它同时也是我们自己的 CC BY 4.0 数据的署名声明。
+
+若要使用本数据库,引用方式见 §12.4。
 
 ### 12.2 溶解度模型
 
@@ -581,10 +599,14 @@ available under the MIT license",Hugging Face 上的权重标为 `mit` 且 `gate
 | **UniProt** | CC BY 4.0(UniProt Consortium) |
 | **Rhea** | CC BY 4.0(SIB / EMBL-EBI) |
 | **ChEBI** | CC BY 4.0(EMBL-EBI) |
-| **DDBJ** | 见 DDBJ 使用条款——**发布前需确认** |
+| **DDBJ**(经 INSDC) | **对使用与再分发均无限制。** 我们只存外链——见下 |
 | **NCBI BLAST+** | NCBI 以公有领域软件分发。**本仓库不再分发它**——由使用者自行下载(§3.4) |
 
-CC BY 4.0 附带署名要求:请注明相应的联盟/机构。
+CC BY 4.0 附带署名要求:请注明相应的联盟/机构。具体署名行见 [`NOTICE`](../../NOTICE)。
+
+**关于 DDBJ。** INSDC 的政策是:其成员库(DDBJ / ENA / GenBank)不对公开的核酸序列数据附加
+使用限制;DDBJ 亦声明它不持有可用来限制使用或再分发的著作权。何况本库并不存 DDBJ 的记录 ——
+只存登录号并据此生成外链(§4.2),所以无论如何都没有序列数据在本仓库被再分发。
 
 ### 12.4 如何引用我们
 

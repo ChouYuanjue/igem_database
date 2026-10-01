@@ -71,6 +71,7 @@ none of which is needed to run anything).
 | `tools/` | `fix_mysql_timestamp_defaults.sql` — a one-off schema repair |
 | `docs/` | This protocol |
 | `README.md` | The operational runbook: prerequisites, the deploy sequence, service start commands, and MySQL/uvicorn gotchas |
+| `LICENSE`, `LICENSE-DATA`, `NOTICE` | The two license texts and the third-party attribution statement — see §12 |
 
 ### 2.2 Hand-off data (`for_*/`)
 
@@ -94,11 +95,16 @@ reads. Within each, a file suffixed `.<source>.tsv` is a per-source segment and 
 Everything below was used to *build and validate* the database. **None of it is needed to run the
 pipeline or the web app**, and it is excluded from the disk figures in §3.1.
 
+**None of it is in this repository either.** This is a record of what our working tree holds, not a
+listing of the tracked files — every group below is covered by `.gitignore`. We keep it because the
+measurements quoted in this page came out of these scripts, and readers deserve to know what they
+were, even where we do not ship them.
+
 | Group | Count | What it is |
 |---|---|---|
 | `_*.py` at the repo root | 24 | Throwaway probe and measurement scripts written while debugging — A/B captures, index and prefix checks, ETL seam probes, graph and search-set probes, performance runs. Nothing imports them. |
 | `_*.json` at the repo root | 9 | The measurement snapshots those probes wrote (before/after pairs, buffer-pool comparisons). |
-| `_*.ps1` at the repo root | 4 | **MySQL setup scripts** — `_move_mysql_datadir.ps1`, `_mysql_tmpdir.ps1`, `_mysql_buffer_pool.ps1`, `_drop_old_datadir.ps1`. These are the exception: they *are* operationally relevant, being step 0 of §9. Each is idempotent and each needs one UAC prompt. |
+| `_*.ps1` at the repo root | 4 | **MySQL setup scripts** — `_move_mysql_datadir.ps1`, `_mysql_tmpdir.ps1`, `_mysql_buffer_pool.ps1`, `_drop_old_datadir.ps1`. The one group that is operationally relevant rather than throwaway — they were step 0 of §9 on our machine. They are still not in the repo: they hard-code that machine's drive letters, its MySQL install path and its service name, and `_drop_old_datadir.ps1` deletes a data directory irreversibly. §9 now spells the three operations out in full and needs nothing from this group. |
 | `_db_backup/`, `_dbbackup/`, `_pre_merge_backup_<timestamp>/` | — | Database dumps, **~1.2 GB combined** |
 | `_mysql_move.log`, `mysqldata_copy.log` | — | Logs from the MySQL directory move |
 | `ge60.json`, `graph_full.json`, `group_edges.json`, `st_600.json`, `st_2000.json` | 5 | More measurement output (these simply lack the leading underscore) |
@@ -109,8 +115,8 @@ pipeline or the web app**, and it is excluded from the disk figures in §3.1.
 `_sandbox/` (the sandbox tree used by `IGEM_DATA_DIR`, §3.5), `_t/`, `_deploy_backup/` — plus
 `chebi_data/` (including `curation_overrides.tsv`) and `child_tables/`.
 
-We have left these in place rather than pruning them: the probes and the outputs they captured are
-how we validated the pipeline, and the measurements quoted in this page came out of them.
+We have left these in place on our machine rather than pruning them: the probes and the outputs they
+captured are how we validated the pipeline. They are not part of what we publish.
 
 ---
 
@@ -608,8 +614,23 @@ it would not error, it would simply not exist.
 
 ### 12.1 Our own code and derived data
 
-> **TODO — team decision.** We have not yet chosen a license for our own code and derived tables.
-> Pick one before publishing this page, and state it here.
+We license our own work under two licenses, split along the code / data line:
+
+| Part | License | Full text |
+|---|---|---|
+| Our source code — `backend/`, `frontend/`, `etl/`, `update_tool/`, `tools/`, `sql/` | **Apache License 2.0** | [`LICENSE`](../../LICENSE) |
+| Our derived tables — `for_*/` — and our documentation — `docs/`, the `.docx` design notes, the `.png` images, the JSON data files | **Creative Commons Attribution 4.0 International (CC BY 4.0)** | [`LICENSE-DATA`](../../LICENSE-DATA) |
+
+Two licenses rather than one because these are different kinds of work. The code gets a
+software license with an explicit patent grant; the data gets the same license its upstream
+sources use, which keeps attribution consistent from one end of the pipeline to the other.
+
+**Under CC BY 4.0 you may share and adapt the data — including commercially — provided you
+give appropriate credit, link to the license, and indicate if changes were made.** The credit
+lines our upstream sources require are collected in [`NOTICE`](../../NOTICE), which doubles as
+the attribution statement for our own CC BY 4.0 material.
+
+If you use the database, cite us as described in §12.4.
 
 ### 12.2 The solubility model
 
@@ -646,10 +667,17 @@ which restricts harmful biological/chemical uses — it does not restrict commer
 | **UniProt** | CC BY 4.0 (UniProt Consortium) |
 | **Rhea** | CC BY 4.0 (SIB / EMBL-EBI) |
 | **ChEBI** | CC BY 4.0 (EMBL-EBI) |
-| **DDBJ** | See DDBJ's terms of use — **confirm before publishing** |
+| **DDBJ** (via INSDC) | **No use or redistribution restrictions.** We store outbound links only — see below |
 | **NCBI BLAST+** | Public-domain software from NCBI. **Not redistributed here** — users download it themselves (§3.4) |
 
 Attribution requirements apply under CC BY 4.0: credit the respective consortium.
+[`NOTICE`](../../NOTICE) carries the exact credit lines.
+
+**On DDBJ.** INSDC's policy is that the partner databases (DDBJ / ENA / GenBank) do not attach
+conditions restricting the use of public nucleotide sequence data, and DDBJ states that it holds
+no copyright restricting use or redistribution. The database also does not store DDBJ records —
+it stores accession numbers and builds outbound links from them (§4.2), so no sequence data is
+redistributed here in any case.
 
 ### 12.4 How to cite us
 
