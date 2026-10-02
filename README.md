@@ -208,7 +208,7 @@ npm run dev
 | 4 | `run_all.py --source=trembl` | 约 2.5–3 小时 | `_src/trembl/` 11 张 |
 | 5 | `run_all.py --merge` | 几分钟 | `_merged/` 3 张 |
 | 6 | `update_database.py` ×3 | 秒级 | `for_*/` 14 张落盘 |
-| 7 | `etl_run.py` | 约 41 分钟 | MySQL 14 张表 |
+| 7 | `etl_run.py` | 约 41 分钟 | MySQL 14 张表（库共 15 张，见 §MySQL 数据表） |
 
 ---
 
@@ -273,7 +273,7 @@ npm run dev
 |---|---|---|
 | `fetch_isoform` / `fetch_references` / `fetch_sequence_links` | `_*_cache.json`（成功即删） | 删掉半截输出重跑即可续传 |
 | `fetch_rhea` / `build_terpene_only` | **无缓存** | 该步整体重跑 |
-| `build_all_nodes` | `_allnodes_inchikey.json`（共享，不随成功删除） | 续传 |
+| `build_all_nodes` | **无缓存**（纯离线，几秒跑完） | 该步整体重跑 |
 
 `run_all.py` **默认跳过已存在的输出**；要强制全重跑加 `--force`。
 
@@ -285,8 +285,8 @@ npm run dev
   它第 ② 步调 `run_all.py --force --out-dir=... <表>` 而不带 `--source`，会直接打印用法退出；
   它的检索词还写死 `reviewed:true`。**没有去补它**，因为补了等于暗示它还能用。
 - **`update_tool/fetch_inchikey.py`** —— 不接任何流程。它产出 6 列并**原地覆盖**
-  `for_graph/all_nodes.tsv`（现表是 3 列），且绕过 `update_database.py` 的备份。
-  功能已由 `build_all_nodes.py` 的 `_allnodes_inchikey.json` 缓存承担。
+  `for_graph/all_nodes.tsv`（现表是 4 列），且绕过 `update_database.py` 的备份。
+  功能已由 `build_all_nodes.py` 承担（它现在读 `chebi_data/structures.tsv.gz`，不联网）。
 
 ### H. 修改工具代码时
 
@@ -444,7 +444,7 @@ igem_database/
 
 ---
 
-## MySQL 数据表（2026-09-20 实测行数）
+## MySQL 数据表（2026-10-02 实测行数）
 
 | 表名 | 行数 | 说明 |
 |---|---|---|
@@ -460,8 +460,13 @@ igem_database/
 | `evidence` | 112,720 | 文献证据 |
 | `enzyme_go` | 75,874 | GO 注释（仅生物过程 BP） |
 | `enzyme_isoform` | 56 | 同工型序列 |
+| `enzyme_solubility_score` | 95,899 | 每酶的模型参考分 + 膜注释。**外部管线产出**（见 `NOTICE` › Not redistributed），不由 `update_tool/` 生成 |
 | `search_index` | 3,756,596 | 聚合全部字段的检索索引 |
 | `pathway_cache` | 0 | 通路结果缓存（**ETL 绝不触碰**） |
+
+库中共 **15 张表**。上表中 `pathway_cache` 是唯一 ETL 从不写入的一张（`etl/` 全目录零引用），其余 **14 张由 ETL 灌入**——`enzyme_solubility_score` 也在其中，尽管它的数据来自外部管线。
+
+所以本节是 **15 行**。文中另有几处写"14 张表"（如 §注意事项 E 的幂等性结论、§换新数据 的复现性实测），指的都是 ETL 写入的这 14 张——口径不同，不是矛盾。
 
 ---
 
@@ -485,6 +490,13 @@ igem_database/
 | GET | `/compounds/suggest` | 化合物联想 |
 | GET | `/compounds/{compoundId}/card` | 化合物卡片 |
 | GET | `/reactions/{reactionId}` | 反应详情 |
+| GET | `/bundle/{kind}/{entityId}` | 一次取回实体字段 + 其化合物结构图 URL（`kind` = `enzyme\|compound\|reaction\|pathway`） |
+| POST | `/bundle/batch` | 批量版（≤50 条，按入参顺序返回，单条查不到不影响整体） |
+
+`kind=pathway` 的 `entityId` 是一条化合物链（`PATH_A_B_C`），不是表里的一行 —— 它由
+`POST /search/pathways` 返回，这里按同一套规则**现算**回来，`entity.graph` 只含这一条链的边。
+id 里**不含筛选条件**，所以当初若用了 `sourceTypes`/`reviewStatuses` 搜索，取回时要带同样的
+查询参数，否则 segment 指向的边可能不是同一组。批量项放不下筛选参数，其中的 pathway 一律按不筛重建。
 | GET | `/blast/subjects` | 当前搜索集下的 BLAST 库序列数 |
 | POST | `/blast/search` | 发起 BLAST（按搜索集建库） |
 | GET | `/download/fields` | 可导出字段 |

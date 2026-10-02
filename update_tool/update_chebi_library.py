@@ -9,6 +9,11 @@
   compounds.tsv.gz          : id, name, ..., chebi_accession, ...   (Name + 全量化合物清单)
   chemical_data.tsv.gz      : id, compound_id, ..., mass, ..., structure_id  (分子量 + 结构关联)
   structure_registry.tsv.gz : id, structure_id, layers(json), ...   (CANONICAL_SMILES)
+  structures.tsv.gz         : id, compound_id, ..., standard_inchi, standard_inchi_key,
+                              default_structure                       (官方 InChI Key)
+    最后一个是 build_all_nodes 取官方 InChI Key 的来源。它**只能从 ChEBI 拿** ——
+    早先那版拿 ChEBI ID 去问 PubChem 的 /compound/name/, 而那是同义词模糊匹配端点,
+    多个 ChEBI 号会折到同一个 CID, 于是 712 条里有 27 条写进了别人分子的键。
 
 输出格式 (与旧库一致):
   chebi_full.tsv   : ChEBI ID, Name, SMILES, Molecular Mass, ChEBI URL   (全部化合物, 按 ChEBI ID 排序)
@@ -47,7 +52,8 @@ for a in sys.argv:
         break
 
 BASE = 'https://ftp.ebi.ac.uk/pub/databases/chebi/flat_files'
-FILES = ['compounds.tsv.gz', 'chemical_data.tsv.gz', 'structure_registry.tsv.gz']
+FILES = ['compounds.tsv.gz', 'chemical_data.tsv.gz', 'structure_registry.tsv.gz',
+         'structures.tsv.gz']
 
 os.makedirs(OUT_DIR, exist_ok=True)
 

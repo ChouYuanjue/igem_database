@@ -146,7 +146,7 @@ python update_database.py
 | output_terpene_only.tsv | for_graph/uniprotkb_terpene_only.tsv | 反应-底物产物(每反应一行) |
 | output_terpene_pairs.tsv | for_graph/uniprotkb_terpene_pairs.tsv | 底物→产物对 |
 | output_terpene_compounds.tsv | for_compound_card/uniprotkb_terpene_compounds.tsv | 化合物卡 |
-| output_all_nodes.tsv | for_graph/all_nodes.tsv | 图节点表(ChEBI ID/Name/InChI Key) |
+| output_all_nodes.tsv | for_graph/all_nodes.tsv | 图节点表(ChEBI ID/Name/InChI Key/InChI Key Derived) |
 | output_master.tsv | for_enzyme_detail/uniprotkb_master.tsv | 酶总表(每酶一行,子表横向铺开) |
 
 ---
@@ -167,7 +167,7 @@ python update_database.py
 | 10 | build_terpene_only.py | output_rhea | output_terpene_only.tsv | Rhea SPARQL(短名) | 无 |
 | 11 | build_terpene_pairs.py | output_terpene_only | output_terpene_pairs.tsv | 离线 | — |
 | 12 | build_terpene_compounds.py | output_terpene_only + chebi_full | output_terpene_compounds.tsv | 离线 | — |
-| 13 | build_all_nodes.py | output_terpene_only + chebi_full | output_all_nodes.tsv | PubChem(InChI Key) | `_allnodes_inchikey.json`(共享,脚本目录) |
+| 13 | build_all_nodes.py | output_terpene_only + chebi_full + `chebi_data/structures.tsv.gz` | output_all_nodes.tsv(4 列) | 离线 | — |
 | 14 | rebuild_master.py | staging 子表 + RAW + output_parsed | output_master.tsv | 离线 | — |
 
 **master 的组装**(rebuild_master.py):先把 5 张子表(go/isoform/references/rhea/sequence_links)
@@ -281,13 +281,14 @@ python update_chebi_library.py [--old=../chebi_data/chebi_full.tsv]
 
 ## 11. 依赖与运行环境
 
-- Python 3(脚本用 3.10 验证),需 `requests`
+- Python 3(脚本用 3.10 验证),需 `requests`、`rdkit`
 - Windows 下打印中文需 `PYTHONIOENCODING=utf-8`(GBK 控制台不认 unicode)
-- 网络依赖:UniProt REST、Rhea SPARQL(sparql.rhea-db.org)、PubChem
+- 网络依赖:UniProt REST、Rhea SPARQL(sparql.rhea-db.org)
 - 断点缓存文件:`_isoform_cache.json` `_ref_cache.json` `_sequence_links_cache.json`
   (成功跑完自动删除)
-- `_allnodes_inchikey.json` 为**共享缓存**(脚本目录,不随成功删除):所有输出目录复用已抓好的
-  InChI Key,避免自定义输出目录时重复抓取;失败的查询不写缓存,下次运行自动重试
+- 第 13 步**不联网**:官方 InChI Key 读本地 `chebi_data/structures.tsv.gz`,派生键用 rdkit 现算。
+  `_allnodes_inchikey.json` 那个抓取缓存已于 2026-10-02 删除 —— 它存的是拿 ChEBI ID 去问
+  PubChem 名字端点得到的值,712 行里有 27 行是别人分子的键。
 
 ---
 

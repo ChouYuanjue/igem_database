@@ -14,13 +14,21 @@ CREATE TABLE IF NOT EXISTS compound (
     smiles TEXT,
     inchi TEXT,
     inchi_key VARCHAR(100),
+    -- 第二个 InChI Key (RDKit 从 smiles 现算)。只给 /ketcher/search 做匹配兜底,
+    -- 不出现在任何 API 响应里。inchi_key 是 ChEBI 官方权威值。
+    -- 既有库要手工补这一列与索引 (etl_compounds._ensure_columns 只加列不建索引):
+    --   ALTER TABLE compound
+    --     ADD COLUMN inchi_key_derived VARCHAR(100) NULL AFTER inchi_key,
+    --     ADD INDEX idx_compound_inchi_key_derived (inchi_key_derived);
+    inchi_key_derived VARCHAR(100),
     structure_image_url VARCHAR(500),
     chebi_url VARCHAR(500),
     description VARCHAR(1000),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_compound_chebi_id (chebi_id),
-    INDEX idx_compound_inchi_key (inchi_key)
+    INDEX idx_compound_inchi_key (inchi_key),
+    INDEX idx_compound_inchi_key_derived (inchi_key_derived)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS enzyme (

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_db
@@ -23,9 +23,15 @@ async def search_structure_by_inchikey(
     if not key:
         return ApiResponse(success=False, error={"code": "BAD_REQUEST", "message": "InChIKey is required"})
 
+    # 两列都匹配。inchi_key 是 ChEBI 官方值, inchi_key_derived 是 RDKit 从库里 smiles
+    # 现算的 —— 两者在 710 条可比数据里只差 2 条 (CHEBI:231826 / CHEBI:53643, ChEBI 自己
+    # 的 smiles 与 standard_inchi 互相矛盾), 谁都不能判为错, 所以两个键都认。
+    # 只认一列会让那 2 条中"用另一种工具算出另一个键"的调用方查不到东西。
+    matches_key = or_(Compound.inchi_key == key, Compound.inchi_key_derived == key)
+
     compound_result = await db.execute(
         select(Compound)
-        .where(Compound.inchi_key == key)
+        .where(matches_key)
         .order_by(Compound.compound_id)
     )
     compounds = [
@@ -46,7 +52,7 @@ async def search_structure_by_inchikey(
         select(ReactionCompound, Reaction, Compound)
         .join(Reaction, ReactionCompound.reaction_id == Reaction.reaction_id)
         .join(Compound, ReactionCompound.compound_id == Compound.compound_id)
-        .where(Compound.inchi_key == key)
+        .where(matches_key)
         .order_by(Reaction.reaction_id, ReactionCompound.role, Compound.compound_id)
     )
     reactions = [

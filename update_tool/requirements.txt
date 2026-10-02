@@ -1,14 +1,25 @@
-# update_tool/ 的采集段依赖。7 个脚本通过 requests 调外部 API:
+# update_tool/ 的采集段依赖。
+#
+# requests —— 6 个脚本通过它调外部 API:
 #   download_uniprot.py      UniProt REST
 #   fetch_rhea.py            Rhea SPARQL
 #   fetch_isoform.py         UniProt REST
 #   fetch_references.py      UniProt REST
 #   fetch_sequence_links.py  UniProt REST
 #   build_terpene_only.py    UniProt REST
-#   build_all_nodes.py       PubChem / ChEBI
 #
-# 除 requests 外均为标准库 (csv / json / gzip / urllib / hashlib), 另有
+# rdkit —— build_all_nodes.py 用它从化合物 SMILES 现算第二个 InChI Key
+#   (compound.inchi_key_derived)。必须现算: 只有从**我们库里那一列 smiles**
+#   推出来的键才保证与库中结构自洽, 抄一个别处的值就断开了这个不变式。
+#   官方键那一列不靠它 —— 那是读本地 chebi_data/structures.tsv.gz 查表, 纯离线。
+#
+#   换 rdkit 版本要重跑生成器并复核两列分歧数**仍为 2**(CHEBI:231826 / CHEBI:53643)。
+#   InChI 库对环上立体中心的判定跨版本会变, 分歧数变了说明派生键漂到了第三个值,
+#   那条路 SMILES 就查不到东西了。
+#
+# 其余均为标准库 (csv / json / gzip / urllib / hashlib), 另有
 # source_registry / cell_values / protein_name 等本目录内的模块。
 #
 # 注意: ETL 的 etl_enzymes.py 也用 requests, 所以 etl/requirements.txt 里也有它。
 requests>=2.31.0
+rdkit>=2024.3.1

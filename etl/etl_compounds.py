@@ -25,6 +25,10 @@ EXCLUDED_COMMON_COMPOUND_IDS = {"CHEBI:15377", "CHEBI:15378", "CHEBI:33019"}
 
 COMPOUND_COLUMNS = {
     "inchi_key": "VARCHAR(100)",
+    # 第二个键 (RDKit 从 smiles 现算)。只服务端匹配用, 不进任何 API 响应。
+    # 注意 _ensure_columns 只 ADD COLUMN, **不建索引** —— 线上库的
+    # idx_compound_inchi_key_derived 要手工 ALTER 一次, 见 sql/schema.sql。
+    "inchi_key_derived": "VARCHAR(100)",
 }
 
 
@@ -33,7 +37,7 @@ def _fill_blank_name(out):
 
     compound.name 是 NOT NULL, 而 all_nodes 里会混进解析不出名字的条目 ——
     全量 TrEMBL 实测有 4 个 POLYMER:* (Rhea 方程里的 ChEBI 聚合物实体,
-    PubChem/ChEBI 都查不到名字与 InChI Key)。空名会让**整条 upsert 事务**
+    ChEBI 参考库里没有它们的名字与结构)。空名会让**整条 upsert 事务**
     因 (1048, "Column 'name' cannot be null") 回滚, 连非空的那些行一起丢。
 
     兜底值取 compound_id 而不是空串: 前端 compound_filters.py 的既有约定是
@@ -77,41 +81,47 @@ def load_compounds():
     out["average_mass"] = pd.to_numeric(df["Molecular Mass"], errors="coerce")
     out["chebi_url"] = df["ChEBI URL"]
     out["inchi_key"] = None          # 由 supplement_from_all_nodes 填
+    out["inchi_key_derived"] = None  # 同上
     out["structure_image_url"] = df["ChEBI ID"].apply(
         lambda x: f"https://www.ebi.ac.uk/chebi/displayImage.do?defaultImage=true&chebiId={x.split(':')[-1]}"
     )
     _fill_blank_name(out)
 
     cols = ["compound_id", "name", "chebi_id", "smiles", "average_mass",
-            "chebi_url", "inchi_key", "structure_image_url"]
+            "chebi_url", "inchi_key", "inchi_key_derived", "structure_image_url"]
     with engine.begin() as conn:
         n = upsert_dataframe(conn, "compound", out[cols],
                              update_cols=[c for c in cols if c != "compound_id"],
-                             preserve=("inchi_key",))
-    print(f"  compound: upsert {n} 行 (inchi_key 传 NULL 不覆盖已有值)")
+                             preserve=("inchi_key", "inchi_key_derived"))
+    print(f"  compound: upsert {n} 行 (两个 inchi key 传 NULL 不覆盖已有值)")
 
 
 def supplement_from_all_nodes():
-    """all_nodes.tsv 里的化合物补进 compound 表, 并把 InChI Key 填上。"""
+    """all_nodes.tsv 里的化合物补进 compound 表, 并把两个 InChI Key 填上。"""
     _ensure_columns("compound", COMPOUND_COLUMNS)
     df = read_merged(ALL_NODES_FILE)
     df = df[~df["ChEBI ID"].isin(EXCLUDED_COMMON_COMPOUND_IDS)]
 
-    has_inchi_key = "InChI Key" in df.columns
+    key_cols = [
+        ("inchi_key", "InChI Key"),                  # ChEBI 官方值: 对外发布的那一列
+        ("inchi_key_derived", "InChI Key Derived"),  # RDKit 现算: 只服务端匹配用
+    ]
     out = pd.DataFrame()
     out["compound_id"] = df["ChEBI ID"]
     out["name"] = df["Name"]
     out["chebi_id"] = df["ChEBI ID"]
-    out["inchi_key"] = df["InChI Key"].fillna("") if has_inchi_key else None
-    # 空串会让 COALESCE 认为「有值」而把已有 inchi_key 抹成空串 -> 先归一成 None。
-    if has_inchi_key:
-        out.loc[out["inchi_key"].astype(str).str.strip() == "", "inchi_key"] = None
+    for column, source in key_cols:
+        present = source in df.columns
+        out[column] = df[source].fillna("") if present else None
+        # 空串会让 COALESCE 认为「有值」而把已有值抹成空串 -> 先归一成 None。
+        if present:
+            out.loc[out[column].astype(str).str.strip() == "", column] = None
     _fill_blank_name(out)
 
     with engine.begin() as conn:
         n = upsert_dataframe(conn, "compound", out,
-                             update_cols=["name", "chebi_id", "inchi_key"],
-                             preserve=("name", "chebi_id", "inchi_key"))
+                             update_cols=["name", "chebi_id"] + [c for c, _ in key_cols],
+                             preserve=("name", "chebi_id") + tuple(c for c, _ in key_cols))
     print(f"  compound (from all_nodes): upsert {n} 行")
 
 

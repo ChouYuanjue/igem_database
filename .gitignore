@@ -103,8 +103,9 @@ Thumbs.db
 # 见 docs/wiki/database-protocol.md §2.3（开发产物清点）。
 # ---------------------------------------------------------------------------
 # 必须锚定到根目录: 裸 `_*.py` 会连 backend/app/models/_enums.py 和所有
-# __init__.py 一起忽略掉，`_*.json` 会误伤 update_tool/_allnodes_inchikey.json
-# （那个是仓库跟踪的真实数据）。
+# __init__.py 一起忽略掉; 裸 `_*.json` 会伸进子目录去误伤 update_tool/ 下**被跟踪**
+# 的真实数据（历史上正是 _allnodes_inchikey.json，2026-10-02 换源后已删除）。
+# 规则照旧锚定 —— 「update_tool/ 下不会再放被跟踪的 _*.json」这个前提没有保证。
 /_*.py
 # 4 个 .ps1 曾是 MySQL 的 datadir/tmpdir/buffer-pool 运维脚本。2026-10-01 之前
 # 其中两个硬编码着本机 root 密码，已改为读 $env:IGEM_DB_PASSWORD；但脚本本身
