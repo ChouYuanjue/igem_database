@@ -95,8 +95,9 @@ mysql -u root -p < sql/schema.sql
 ### 2. 装依赖
 
 ```bash
-pip install -r etl/requirements.txt
-pip install -r backend/requirements.txt
+pip install -r etl/requirements.txt          # 建表段
+pip install -r update_tool/requirements.txt  # 采集段（第 3–5 步要用）
+pip install -r backend/requirements.txt      # 后端
 cd frontend && npm install && cd ..
 ```
 
@@ -406,6 +407,7 @@ igem_database/
 ├── backend/                        # FastAPI 后端
 │   ├── app/{main,config,database}.py
 │   ├── app/{models,schemas,routers,services,utils}/
+│   ├── .env.example                #   环境变量模板（复制成 .env 后填值）
 │   └── .env                        #   数据库密码（不提交 git）
 ├── frontend/                       # React + Vite 前端
 ├── for_enzyme_detail/              # 落盘的 TSV（分段带 .<source> 后缀）
@@ -434,10 +436,11 @@ igem_database/
 | `IGEM_DB_PASSWORD` | *(空)* | MySQL 密码，**ETL 与后端必填** |
 | `IGEM_DB_NAME` | `igem_terpene` | 数据库名（可指向另一个库做复现/沙箱） |
 | `IGEM_DATA_DIR` | 仓库根 | ETL 读哪份 `for_*`（沙箱用） |
-| `IGEM_BLAST_BIN` | `blastp` | BLAST 可执行文件路径 |
+| `IGEM_BLAST_BIN_DIR` | `blast_bin` | BLAST+ 可执行文件所在目录（空串 = 用系统 PATH） |
+| `IGEM_BLAST_WORK_DIR` | `blast_work` | BLAST+ 工作目录，路径必须全 ASCII |
 | `PYTHONIOENCODING` | — | Windows 控制台跑中文输出的脚本时要设 `utf-8` |
 
-后端也可通过 `backend/.env` 配置。密码通过环境变量传递，**不要写进命令行**（会出现在进程列表里）。
+后端也可通过 `backend/.env` 配置，模板见 `backend/.env.example`。**注意 `backend/.env` 只喂后端**——ETL 是在进程环境里直接读这些变量，不加载该文件。密码通过环境变量传递，**不要写进命令行**（会出现在进程列表里）。
 
 ---
 

@@ -173,11 +173,15 @@ innodb_buffer_pool_instances=1
 | 位置 | 依赖 |
 |---|---|
 | `backend/requirements.txt` | `fastapi`、`uvicorn[standard]`、`sqlalchemy[asyncio]`、**`aiomysql`**、`pydantic` v2、`pydantic-settings`、`python-dotenv`、`httpx`、`openpyxl` |
-| `etl/requirements.txt` | `pandas`、`sqlalchemy`、**`pymysql`** |
-| `update_tool/` | 使用 `requests` 等库,但**仓库内未提供 requirements.txt** |
+| `etl/requirements.txt` | `pandas`、`sqlalchemy`、**`pymysql`**、`requests` |
+| `update_tool/requirements.txt` | `requests` |
 
-> **复现已知缺口。** `update_tool/` 没有声明依赖文件,而 `fetch_rhea.py` 等脚本直接 `import requests`。
-> 第三方从零复现时需自行 `pip install requests`,否则 §9 的第 4 步会中断。
+> **两条驱动链不能互换。** `backend/requirements.txt` 里没有 `pymysql`,`etl/requirements.txt` 里
+> 没有 `aiomysql`。装了其中一个并不能跑另一个:后端走 `create_async_engine`(故用 `+aiomysql`),
+> ETL 走 `create_engine`(故用 `+pymysql`)。
+>
+> `etl_enzymes.py` 会调 UniProt REST 补本地文件里缺的字段,所以 ETL 并非纯离线步骤,也需要
+> `requests`。`update_tool/` 需要它也是同一原因——那里的每个 fetch 步骤都要连远程 API。
 
 ### 3.4 外部程序:NCBI BLAST+
 
@@ -521,7 +525,7 @@ for_enzyme_detail/child_tables/uniprotkb_solubility_score.trembl.tsv
 - **第 6、7 步读取连接信息的方式不同。** ETL 只读环境变量、不读 `.env`,所以第 7 步前必须在当前
   shell 里 `export IGEM_DB_PASSWORD=...`(Windows cmd 用 `set`);后端则可以从 `backend/.env` 读取。
 - 命令里的 `python` 指你所用的解释器;若使用虚拟环境或 `python3`,请相应替换。
-- **各步依赖不同:** 第 3–6 步跑的是 `update_tool/`(需 `requests` 等,见 §3.3 的缺口提示),
+- **各步依赖不同:** 第 3–6 步跑的是 `update_tool/`(需 `update_tool/requirements.txt`),
   第 7 步跑的是 `etl/requirements.txt`,启动 Web 服务才需要 `backend/requirements.txt`。
 
 ---
@@ -548,7 +552,9 @@ for_enzyme_detail/child_tables/uniprotkb_solubility_score.trembl.tsv
 ## 11. 已知限制
 
 1. **结构检索是精确匹配,不支持子结构或相似性搜索**(§7.1)。
-2. **`update_tool/` 缺少依赖声明文件**,从零复现需手动补装 `requests` 等库(§3.3)。
+2. **`update_tool/` 的脚本必须经 `run_all.py` 驱动。** 它们的默认输入路径指向从未随仓库分发的文件名
+   (`../uniprotkb_terpene_AND_reviewed_true_2026_07_*.tsv`);只有 `run_all.py` 会传真实路径,
+   所以单独跑某个 fetch 脚本会失败。
 3. **重建耗时以小时计。** TrEMBL 段的联网步骤约 2.5–3 小时,且依赖外部 API 的可用性;网络步骤设有
    断点缓存,中断后可续跑。
 4. **数据随 UniProt 版本漂移。** 本页规模数字是 2026-09-20 的快照,重新下载后条目数会变化。

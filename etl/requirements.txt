@@ -1,3 +1,5 @@
 pandas>=2.0.0
 sqlalchemy>=2.0.0
 pymysql>=1.1.0
+# etl_enzymes.py 会调 UniProt REST 补 accession 的缺失字段, 不是纯离线步骤。
+requests>=2.31.0

@@ -192,12 +192,17 @@ The collection stage and the query stage deliberately use **two different databa
 | Location | Dependencies |
 |---|---|
 | `backend/requirements.txt` | `fastapi`, `uvicorn[standard]`, `sqlalchemy[asyncio]`, **`aiomysql`**, `pydantic` v2, `pydantic-settings`, `python-dotenv`, `httpx`, `openpyxl` |
-| `etl/requirements.txt` | `pandas`, `sqlalchemy`, **`pymysql`** |
-| `update_tool/` | Uses `requests` and others, but **ships no requirements file** |
+| `etl/requirements.txt` | `pandas`, `sqlalchemy`, **`pymysql`**, `requests` |
+| `update_tool/requirements.txt` | `requests` |
 
-> **Known reproducibility gap.** `update_tool/` declares no dependency file, while scripts such as
-> `fetch_rhea.py` import `requests` directly. A third party reproducing from scratch needs to
-> `pip install requests` themselves, or step 4 of §9 will fail.
+> **The two driver chains are not interchangeable.** `backend/requirements.txt` does not carry
+> `pymysql`, and `etl/requirements.txt` does not carry `aiomysql`. Installing one does not let you
+> run the other: the backend uses `create_async_engine` (hence `+aiomysql`) while the ETL uses
+> `create_engine` (hence `+pymysql`).
+>
+> `etl_enzymes.py` calls the UniProt REST API to fill in fields missing from the local files, so
+> the ETL is not a fully offline step and needs `requests` as well. `update_tool/` needs it for the
+> same reason — every fetch step there talks to a remote API.
 
 ### 3.4 External program: NCBI BLAST+
 
@@ -579,9 +584,9 @@ Notes:
   and never `.env`, so step 7 requires `export IGEM_DB_PASSWORD=...` in the current shell
   (`set` on Windows `cmd`). The backend, by contrast, can read `backend/.env`.
 - `python` means whichever interpreter you use — substitute `python3` or a virtualenv as needed.
-- **Each step has different dependencies:** steps 3–6 run `update_tool/` (needs `requests` and
-  others — see the gap noted in §3.3), step 7 needs `etl/requirements.txt`, and only serving the web
-  app needs `backend/requirements.txt`.
+- **Each step has different dependencies:** steps 3–6 run `update_tool/` (needs
+  `update_tool/requirements.txt`), step 7 needs `etl/requirements.txt`, and only serving the web app
+  needs `backend/requirements.txt`. See §3.3.
 
 ---
 
@@ -612,8 +617,9 @@ it would not error, it would simply not exist.
 ## 11. Known limitations
 
 1. **Structure search is exact matching only** — no substructure or similarity search (§7.1).
-2. **`update_tool/` ships no dependency manifest**, so from-scratch reproduction requires manually
-   installing `requests` and others (§3.3).
+2. **`update_tool/` scripts must be driven through `run_all.py`.** Their default input paths point
+   at filenames that never shipped (`../uniprotkb_terpene_AND_reviewed_true_2026_07_*.tsv`); only
+   `run_all.py` passes the real paths, so running a fetch script standalone fails.
 3. **A rebuild takes hours.** The TrEMBL networked steps run ~2.5–3 h and depend on external API
    availability. Networked steps use a resumable cache, so an interrupted run can continue.
 4. **Data drifts with UniProt versions.** The counts in this document are a 2026-09-20 snapshot;
