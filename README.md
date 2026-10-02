@@ -524,7 +524,7 @@ igem_database/
 | 源代码（`backend/` `frontend/` `etl/` `update_tool/` `tools/` `sql/`） | Apache License 2.0 | [`LICENSE`](LICENSE) |
 | 派生的表（`for_*/`）与文档（`docs/`、`.docx`、`.png`、`.json`） | CC BY 4.0 | [`LICENSE-DATA`](LICENSE-DATA) |
 
-上游数据（UniProt / Rhea / ChEBI / DDBJ）与随附的第三方软件（Ketcher 等）的署名、
-以及 NCBI BLAST+ 为何**不**在本仓库内分发,都记在 [`NOTICE`](NOTICE)。
+上游数据（UniProt / Rhea / ChEBI / DDBJ）的署名、随附的第三方软件（Ketcher）的许可与声明、
+以及 NCBI BLAST+ 与 DeepSolNet / ESM C 300M 为何**不**在本仓库内分发,都记在 [`NOTICE`](NOTICE)。
 数据与文档采用 CC BY 4.0,也就是上游数据源自己的许可 —— 复用本库时请保留其中的署名。
 详细说明见 [`docs/wiki/database-protocol.md`](docs/wiki/database-protocol.md) §12。

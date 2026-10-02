@@ -25,8 +25,9 @@
     6  Sequence Length     残基数，供分层与 QA
     7  Source              swiss_prot / trembl（仅分段表有）
 
-**没有注释行。** 数据库的 ETL 用 `csv.DictReader` 读子表，`#` 开头会被当成数据行，
-所以模型出处写进了列名（`DeepSolNet Score`）而不是文件头。UTF-8 无 BOM，CRLF，制表符分隔。
+**没有注释行。** ETL 用 `pandas.read_csv` 读子表（`update_tool/` 那侧用的才是 `csv.DictReader`），
+两者都不认注释行，`#` 开头会被当成数据行，所以模型出处写进了列名（`DeepSolNet Score`）而不是文件头。
+UTF-8 无 BOM，CRLF，制表符分隔。
 
 取值一律 ASCII 英文小写连字符，与库里已有的枚举同风格（`left-to-right`、`not specified`、
 `journal article`）。合并态子表实测 0 个非 ASCII 字符，本表也一样——**源交付物

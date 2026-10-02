@@ -67,15 +67,11 @@ Two kinds of notice travel with it, and they cover different things:
   itself is covered by the repository's root [`LICENSE`](LICENSE), which is Apache
   License 2.0 — the same licence EPAM distributes it under.
 
-### DeepSolNet / ESM C 300M
-The per-enzyme solubility scores in
-`for_enzyme_detail/child_tables/uniprotkb_solubility_score.*.tsv` were produced by
-DeepSolNet (https://github.com/wangxinglong1990/DeepSolNet), which builds on ESM C
-300M. We store the resulting scores as data; neither the tool nor the model weights
-are redistributed here. `docs/wiki/database-protocol.md` §12.2 records the current
-terms of both and the date they were checked.
-
 ## Not redistributed
+
+Two upstream components are absent from this repository, in two different senses. BLAST+ runs on
+**your** machine and leaves nothing in what we ship. DeepSolNet ran once on **ours**, and its output
+is part of the data we do ship — so it is recorded here even though nothing of it is redistributed.
 
 ### NCBI BLAST+
 Sequence homology search runs a locally installed NCBI BLAST+ as a subprocess.
@@ -92,6 +88,21 @@ their own platform — see `docs/wiki/database-protocol.md` §3.4. That page als
 you to keep the `LICENSE` file that ships inside the NCBI archive: if you go on to
 redistribute BLAST+ yourself, that file is the notice you need to pass along, and the
 archive's copy of it — not a paraphrase — is the authoritative one.
+
+### DeepSolNet / ESM C 300M
+The per-enzyme solubility scores in
+`for_enzyme_detail/child_tables/uniprotkb_solubility_score.*.tsv` were produced by
+DeepSolNet (https://github.com/wangxinglong1990/DeepSolNet), which builds on ESM C 300M. **What we
+ship from this is the scores, as data** — neither the tool nor the model weights are in this
+repository, and no part of either is redistributed.
+
+This is the one case where the model's name survives in the shipped artefact itself: the column is
+called `DeepSolNet Score`. The loader (`etl/sources.py`, via `pandas.read_csv` with no comment
+handling) would read a leading `#` block as data, so the provenance had to go into the column name
+rather than a header comment. See `for_enzyme_detail/child_tables/solubility_scores.md`.
+
+`docs/wiki/database-protocol.md` §12.2 records the current terms of both and the date they were
+checked.
 
 ## Corrections
 
