@@ -46,6 +46,15 @@ from app.services.graph_service import (
 # away. Curated DBs stay far below this.
 _MAX_COLLECT = 800
 
+#: `pathway_id` 的前缀。生成在 `_assemble_card`, 解析在 `parse_pathway_id` —— 一对,
+#: 改一个必须改另一个。
+PATHWAY_ID_PREFIX = "PATH_"
+
+# `load_pathway_by_chain` 的失败原因, 由 `/bundle` 端点翻译成 error.code。
+PATHWAY_BAD_ID = "BAD_ID"
+PATHWAY_UNKNOWN_COMPOUND = "UNKNOWN_COMPOUND"
+PATHWAY_NOT_REACHABLE = "NOT_REACHABLE"
+
 FIELD_LABELS = {"start": "起点", "end": "终点", "via": "中间点"}
 
 
@@ -426,7 +435,7 @@ def _assemble_card(
 
     names = [name_map.get(compound_id, compound_id) for compound_id in chain]
     return PathwayCard(
-        pathway_id="PATH_" + "_".join(chain),
+        pathway_id=PATHWAY_ID_PREFIX + "_".join(chain),
         summary=" → ".join(names),
         compound_ids=chain,
         edge_ids=edge_ids,
@@ -434,3 +443,78 @@ def _assemble_card(
         segments=segments,
         step_count=len(chain) - 1,
     )
+
+
+# ---------------------------------------------------------------------------
+# Reload a single already-known chain
+# ---------------------------------------------------------------------------
+
+
+def parse_pathway_id(pathway_id: str) -> Optional[List[str]]:
+    """``PATH_A_B_C`` -> ``[A, B, C]``；不合法返回 None。
+
+    分隔符 ``_`` 是安全的：全库 734 个 compound_id 没有一个含下划线（最长 13 字符），
+    所以 ``"_".join(chain)`` 能无损拆回来。这与 ``_assemble_card`` 里生成 id 的那行
+    是一对，改格式必须两处一起改。
+    """
+    if not pathway_id or not pathway_id.startswith(PATHWAY_ID_PREFIX):
+        return None
+    chain = pathway_id[len(PATHWAY_ID_PREFIX):].split("_")
+    if len(chain) < 2 or any(not part for part in chain):
+        return None
+    return chain
+
+
+async def load_pathway_by_chain(
+    db: AsyncSession,
+    chain: List[str],
+    source_types: Optional[List[str]] = None,
+    review_statuses: Optional[List[str]] = None,
+) -> Tuple[Optional[PathwayCard], Optional[str]]:
+    """把一条**已知**的化合物链还原成 PathwayCard，返回 ``(card, failure)``。
+
+    与 ``search_pathways`` 的区别是它不做枚举 —— 链是给定的，只要按相邻对查边，
+    所以比搜索便宜。代价是 id 只编码了化合物链、**没编码筛选条件**：同一个 id 在不同
+    ``source_types`` / ``review_statuses`` 下可能给出不同的 edgeId/edgeGroupId，
+    因此筛选必须透传进来，否则拿到的 segment 未必是调用方当初看到的那组。
+
+    ``card.graph`` 只含**这一条链**的边 —— 搜索接口里那张是所有返回通路的并集，
+    单取一条时"并集"没有意义。
+    """
+    if len(chain) < 2:
+        return None, PATHWAY_BAD_ID
+
+    rows = await db.execute(
+        select(Compound.compound_id).where(Compound.compound_id.in_(chain))
+    )
+    known = {compound_id for (compound_id,) in rows.all()}
+    if any(compound_id not in known for compound_id in chain):
+        return None, PATHWAY_UNKNOWN_COMPOUND
+
+    _adjacency, pair_rows = await _load_edge_pair_graph(
+        db, source_types, review_statuses
+    )
+    step_pairs = {(chain[i], chain[i + 1]) for i in range(len(chain) - 1)}
+    if not step_pairs <= set(pair_rows):
+        return None, PATHWAY_NOT_REACHABLE
+
+    union_rows = _dedupe_rows_for_pairs(pair_rows, step_pairs)
+    payload = await build_pathway_union_payload(db, union_rows, keep_pair=step_pairs)
+
+    pair_single: Dict[Tuple[str, str], str] = {}
+    for edge in payload.edges:
+        pair_single.setdefault(
+            (edge.source_compound_id, edge.target_compound_id), edge.edge_id
+        )
+    pair_group: Dict[Tuple[str, str], str] = {}
+    for group in payload.edge_groups:
+        pair_group.setdefault(
+            (group.source_compound_id, group.target_compound_id), group.edge_group_id
+        )
+
+    name_map = await _load_compound_names(db, set(chain))
+    card = _assemble_card(chain, pair_single, pair_group, name_map)
+    if card is None:
+        return None, PATHWAY_NOT_REACHABLE
+
+    return card.model_copy(update={"graph": payload}), None

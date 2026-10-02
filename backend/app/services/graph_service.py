@@ -10,6 +10,7 @@ from app.models import (
 from app.schemas.graph import GraphPayload, ReactionEdge, EdgeGroup, EdgeGroupItem, FocusPoint
 from app.schemas.compound import CompoundCard
 from app.schemas.enzyme import EnzymeCard
+from app.utils.compound_card import compound_to_card
 from app.utils.compound_filters import displayable_compound_filters
 from app.services.search_service import search_entries
 
@@ -838,20 +839,11 @@ async def _load_gene_names(db: AsyncSession, enzyme_ids: Set[str]) -> Dict[str, 
 
 
 def _compound_to_card(c: Compound) -> CompoundCard:
-    return CompoundCard(
-        compound_id=c.compound_id,
-        name=c.name,
-        chebi_id=c.chebi_id,
-        smiles=c.smiles,
-        formula=c.formula,
-        charge=float(c.charge) if c.charge else None,
-        average_mass=float(c.average_mass) if c.average_mass else None,
-        inchi=c.inchi,
-        inchi_key=c.inchi_key,
-        structure_image_url=c.structure_image_url,
-        chebi_url=c.chebi_url,
-        description=c.description,
-    )
+    # 委托给 app.utils.compound_card 里唯一的装配器, 别在这里重写一遍 ——
+    # 两份实现迟早会漂移 (曾经就是: routers/*.py 里有 4 份各自不同的写法)。
+    # 直接 import utils 而不是 entity_service: entity_service 要调 pathway_service,
+    # 而 pathway_service 调本模块, 走 entity_service 会成环。
+    return compound_to_card(c)
 
 
 def _build_edges_and_groups(

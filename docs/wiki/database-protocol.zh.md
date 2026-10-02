@@ -91,8 +91,10 @@
 
 **它们几乎都不在本仓库里。** 把它们挡在外面的规则(`/_*.py`、`/_*.ps1`、`/_*.log`,以及
 五条 JSON 模式 `/_graph_*.json`、`/_iso_*.json`、`/_ab_*.json`、`/_pool_*.json`、
-`/st_*.json`)仍在 `.gitignore` 里。这里**故意没有**裸的 `/_*.json` 规则——它会把被跟踪的
-`update_tool/_allnodes_inchikey.json` 一起误伤。例外在下表中单独标出。
+`/st_*.json`)仍在 `.gitignore` 里。这里**故意没有**裸的 `_*.json` 规则——裸模式不认目录层级,
+会伸进子目录把 `update_tool/` 下**被跟踪**的真实数据一起误伤(历史上正是
+`update_tool/_allnodes_inchikey.json`;该文件 2026-10-02 随 `build_all_nodes.py` 换源
+改为离线而删除)。规则照旧锚定。例外在下表中单独标出。
 
 | 组 | 数量 | 现状 | 是什么 |
 |---|---|---|---|
@@ -172,9 +174,9 @@ innodb_buffer_pool_instances=1
 
 | 位置 | 依赖 |
 |---|---|
-| `backend/requirements.txt` | `fastapi`、`uvicorn[standard]`、`sqlalchemy[asyncio]`、**`aiomysql`**、`pydantic` v2、`pydantic-settings`、`python-dotenv`、`httpx`、`openpyxl` |
+| `backend/requirements.txt` | `fastapi`、`uvicorn[standard]`、`sqlalchemy[asyncio]`、**`aiomysql`**、`pydantic` v2、`pydantic-settings`、`python-dotenv`、`httpx`、`openpyxl`、**`rdkit`** |
 | `etl/requirements.txt` | `pandas`、`sqlalchemy`、**`pymysql`**、`requests` |
-| `update_tool/requirements.txt` | `requests` |
+| `update_tool/requirements.txt` | `requests`、**`rdkit`** |
 
 > **两条驱动链不能互换。** `backend/requirements.txt` 里没有 `pymysql`,`etl/requirements.txt` 里
 > 没有 `aiomysql`。装了其中一个并不能跑另一个:后端走 `create_async_engine`(故用 `+aiomysql`),
@@ -182,6 +184,13 @@ innodb_buffer_pool_instances=1
 >
 > `etl_enzymes.py` 会调 UniProt REST 补本地文件里缺的字段,所以 ETL 并非纯离线步骤,也需要
 > `requests`。`update_tool/` 需要它也是同一原因——那里的每个 fetch 步骤都要连远程 API。
+>
+> `rdkit` 原本只有 `update_tool/` 离线需要: `build_all_nodes.py` 从化合物 SMILES 现算
+> `compound.inchi_key_derived`。**后端现在也带它**, 但只服务一条路由 ——
+> `GET /api/v1/bundle/compound?smiles=` 在服务端把传入的 SMILES 转成 InChIKey
+> (`app/utils/chemistry.py`),好让手里只有 SMILES 字符串、没有 Ketcher 画布的调用方也能查到化合物。
+> 它就是当初产出 `inchi_key_derived` 的那套转换,所以两者必须同 rdkit 版本。**ETL 仍然什么都不需要**:
+> 派生键在生成阶段就算完存进库,其余查询路径都只是字符串匹配。
 
 ### 3.4 外部程序:NCBI BLAST+
 
@@ -260,7 +269,7 @@ ETL 读的是**同一套 `IGEM_DB_*` 变量名**,但有自己的配置(`etl/conf
 | 来源 | 接入方式 | 获取内容 |
 |---|---|---|
 | **Rhea** | SPARQL(`sparql.rhea-db.org`)+ RDF | 反应方程式、生理方向、EC 号、反应 SMILES |
-| **ChEBI** | EBI FTP 平面文件(约 50 MB 压缩包) | 本地 SMILES / InChIKey 映射表,避免逐条查询 |
+| **ChEBI** | EBI FTP 平面文件(4 个压缩包,共约 125 MB) | 本地 SMILES / InChIKey 映射表,避免逐条查询。其中 `structures.tsv.gz` 92 MB,提供官方 `standard_inchi_key` |
 | **UniProt 导出列** | 离线解析,不打 API | GO 注释、异构体序列、参考文献(PubMed)、核酸编号 |
 | **DDBJ** | `getentry.ddbj.nig.ac.jp` | 核酸序列链接 |
 | **人工校订** | 仓库内 `update_tool/chebi_data/curation_overrides.tsv` | 对自动匹配结果的人工修正 |
@@ -351,7 +360,7 @@ cd etl && python -u etl_run.py --source=swiss_prot  # 只重载单个来源
 | 表 | 内容 |
 |---|---|
 | `enzyme` | 酶总表:UniProt ID、序列、来源类型(swiss_prot / trembl) |
-| `compound` | 化合物:SMILES / InChI / InChIKey / ChEBI ID |
+| `compound` | 化合物:SMILES / InChI / InChIKey(官方 + 派生)/ ChEBI ID |
 | `reaction` | 反应:Rhea ID、方程式、方向、EC 号 |
 | `reaction_compound` | 底物 / 产物链接,带 `role` |
 | `enzyme_reaction_edge` | 酶–反应边(图谱主体) |
@@ -400,14 +409,29 @@ npm run build      # tsc -b && vite build  →  dist/
 
 > **重启 MySQL 之后必须重启后端。** 连接池里的连接会全部失效,不重启的话每个请求都返回 500。
 
-### 7.1 化学信息学:一个有意的取舍
+### 7.1 化学信息学:它跑在哪、不跑在哪
 
-**本地不使用 RDKit、OpenBabel 或 Indigo。** 取而代之:
+**服务路径上几乎没有什么是现算结构的。** 结构式 = **预生成的 SVG**
+(`/assets/compounds/{chebi_id}/structure.svg`、`/assets/reactions/{rhea_id}/atom-map.svg`);
+结构检索 = **InChIKey 精确匹配**, **不是子结构搜索**。RDKit 是唯一的例外, 它出现在且仅出现在两处,
+两处都只做「结构 → 键」这一件事:
 
-- 结构式 = **预生成的 SVG**(`/assets/compounds/{chebi_id}/structure.svg`、
-  `/assets/reactions/{rhea_id}/atom-map.svg`)。
-- 结构检索 = **InChIKey 精确匹配**(浏览器端 Ketcher 编辑器计算 InChIKey → `GET /api/v1/ketcher/search`),
-  **不是子结构搜索**。
+- **离线, 在 `update_tool/` 里**, 预计算 `inchi_key_derived` 那一列(见下)。
+- **在后端**, 服务 `GET /api/v1/bundle/compound?smiles=`。手里只有 SMILES 字符串、没有 InChIKey 的
+  调用方本来无路可走:画图界面只能从鼠标输入产出键。后端用 RDKit 把 SMILES 转成键
+  (`app/utils/chemistry.py`),然后走下面那同一套两列匹配。响应结构与
+  `GET /api/v1/bundle/compound/{compound_id}` **完全相同** —— SMILES 只是*指认*化合物的另一种
+  写法 —— 解析结果由 `data.entityId` 给出。解析不了的 SMILES、以及含 `*` 的 R 基/通式
+  (它压根没有 InChIKey)都会返回错误信封, 而不是 500。
+
+ETL 和浏览器包里没有化学库。网页端的键在浏览器里由 Ketcher(Indigo/WASM)算出,再打
+`GET /api/v1/ketcher/search?inchikey=`。
+
+匹配**跨两列**:`compound.inchi_key`(ChEBI 官方 `standard_inchi_key`)**或**
+`compound.inchi_key_derived`(RDKit 在生成阶段从该行自己的 SMILES 算出)。两列只在 2 个化合物上分歧
+(`CHEBI:231826`、`CHEBI:53643`)——ChEBI 自己那条记录自相矛盾,`smiles` 与 `standard_inchi`
+描述的是不同立体异构体。Ketcher 拿库里那串 SMILES 重算,得到的是**派生**那个键;后端 `?smiles=`
+那条路由上的 RDKit 同样如此, 所以这两个化合物从两个入口都还够得着。响应里**只**出现官方那一列。
 
 即:我们的结构检索能命中「同一个化合物」,但不能命中「结构相似的化合物」。引用这项功能时请注意这
 一边界。
@@ -560,6 +584,9 @@ for_enzyme_detail/child_tables/uniprotkb_solubility_score.trembl.tsv
 4. **数据随 UniProt 版本漂移。** 本页规模数字是 2026-09-20 的快照,重新下载后条目数会变化。
 5. **重启 MySQL 后必须重启后端**(§7),否则每个请求都返回 500。
 6. **溶解度分数是模型参考分**,不是校准过的概率;本库中没有任何阈值经过标签验证(§8)。
+7. **含 `*` 的 SMILES 在任何入口都查不到。** 这种字符串描述的是 R 基或通式,不是分子,所以它没有
+   InChIKey,任何化学库也变不出来。带 SMILES 的 730 行里恰好有 20 行是这种(这也是只有 710 行有
+   官方键的原因),它们无法通过结构检索命中(§7.1)。
 
 ---
 

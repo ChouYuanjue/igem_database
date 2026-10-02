@@ -7,4 +7,8 @@ pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
 httpx>=0.27.0
 openpyxl>=3.1.0
+# 只给 GET /bundle/compound?smiles= 做查询时的 SMILES→InChIKey 转换 (app/utils/chemistry.py)。
+# 它同时是产出 compound.inchi_key_derived 的那套转换, 换版本会让两边的键漂开,
+# 所以下界应与 update_tool/requirements.txt 保持一致。
+rdkit>=2024.3.1
 

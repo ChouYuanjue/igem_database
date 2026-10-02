@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bundle API demo</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#fff; --line:#e3e6ea; --ink:#1f2937; --muted:#6b7280;
+    --accent:#4f46e5; --accent-soft:#eef2ff; --ok:#16a34a; --warn:#dc2626;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:24px; background:var(--bg); color:var(--ink);
+    font:14px/1.55 "Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;
+  }
+  h1{margin:0 0 4px; font-size:20px}
+  .sub{color:var(--muted); margin:0 0 20px; font-size:13px}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px}
+  .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  label{font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px}
+  select,input,textarea,button{
+    font:inherit; padding:7px 10px; border:1px solid var(--line); border-radius:7px;
+    background:#fff; color:var(--ink);
+  }
+  select:focus,input:focus,textarea:focus{outline:2px solid var(--accent-soft); border-color:var(--accent)}
+  input{min-width:230px}
+  textarea{width:100%; min-height:96px; font-family:ui-monospace,Consolas,monospace; font-size:13px}
+  button{
+    background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; font-weight:600;
+  }
+  button:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.5; cursor:default}
+  button.ghost{background:#fff; color:var(--accent)}
+  .chips{display:flex; gap:6px; flex-wrap:wrap; margin-top:10px}
+  .chip{
+    background:var(--accent-soft); color:var(--accent); border:1px solid #dbe0fb;
+    border-radius:999px; padding:3px 11px; font-size:12px; cursor:pointer;
+  }
+  .chip:hover{background:#e0e7ff}
+  .hidden{display:none !important}
+  .status{font-size:13px; color:var(--muted); margin-left:auto}
+  .status.err{color:var(--warn)}
+  .status.ok{color:var(--ok)}
+  .grid{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; align-items:start}
+  @media(max-width:1000px){.grid{grid-template-columns:minmax(0,1fr)}}
+  .kv{display:grid; grid-template-columns:150px minmax(0,1fr); gap:4px 12px; font-size:13px}
+  .kv dt{color:var(--muted); overflow-wrap:anywhere}
+  .kv dd{margin:0; overflow-wrap:anywhere}
+  .kv .empty{color:#c3c8cf}
+  h2{font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:0 0 10px}
+  .gallery{display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px}
+  .mol{border:1px solid var(--line); border-radius:8px; padding:8px; background:#fff; text-align:center}
+  .mol .box{height:96px; display:flex; align-items:center; justify-content:center; background:#fbfbfd; border-radius:6px; margin-bottom:6px}
+  .mol img{max-width:100%; max-height:96px}
+  .mol .nm{font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .mol .id{font-size:11px; color:var(--muted); font-family:ui-monospace,Consolas,monospace}
+  .mol .bad{font-size:11px; color:var(--muted); line-height:1.3}
+  .mol.none .box{background:#fafafa; border:1px dashed var(--line)}
+  .src{display:inline-block; margin-top:4px; font-size:10px; padding:1px 6px; border-radius:999px; background:#f1f3f6; color:var(--muted)}
+  .src.chebi_proxy{background:#eef2ff; color:var(--accent)}
+  .src.none{background:#fef2f2; color:var(--warn)}
+  pre{
+    background:#0f172a; color:#e2e8f0; padding:14px; border-radius:8px; overflow:auto;
+    max-height:460px; font:12px/1.5 ui-monospace,Consolas,monospace; margin:0;
+  }
+  .tag{display:inline-block; padding:1px 8px; border-radius:999px; background:#f1f3f6; font-size:11px; margin-right:6px}
+  .tag.swiss_prot{background:#eef2ff; color:var(--accent)}
+  .tag.trembl{background:#fff7ed; color:#ea580c}
+  .tag.official{background:#f0fdf4; color:var(--ok)}
+  table{border-collapse:collapse; width:100%; font-size:12.5px}
+  th,td{text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.4px}
+  .scroll{max-height:300px; overflow:auto}
+</style>
+</head>
+<body>
+
+<h1>Bundle API demo</h1>
+<p class="sub">
+  <code>GET /api/v1/bundle/{kind}/{entityId}</code> &nbsp;·&nbsp;
+  <code>POST /api/v1/bundle/batch</code> &nbsp;·&nbsp;
+  <code>GET /api/v1/bundle/compound?smiles=</code> &nbsp;— fields + structure image URLs in one call.
+</p>
+
+<div class="panel">
+  <div class="row">
+    <label for="api">API base</label>
+    <input id="api" value="http://localhost:8000" style="min-width:220px">
+    <label for="mode">Mode</label>
+    <select id="mode">
+      <option value="one">single (GET)</option>
+      <option value="batch">batch (POST)</option>
+    </select>
+    <span id="status" class="status"></span>
+  </div>
+
+  <div id="oneRow" class="row" style="margin-top:12px">
+    <label for="kind">kind</label>
+    <select id="kind">
+      <option>compound</option>
+      <option>enzyme</option>
+      <option>reaction</option>
+      <option>pathway</option>
+    </select>
+    <label for="eid">entity id</label>
+    <input id="eid" value="CHEBI:10115">
+    <button id="go">Fetch</button>
+  </div>
+
+  <div id="smilesRow" class="row" style="margin-top:12px">
+    <label for="smi">SMILES</label>
+    <input id="smi" value="CC(C)=CCC[C@H](C)[C@@H]1C=CC(C)=CC1" style="min-width:340px">
+    <button id="goSmiles">Fetch by SMILES</button>
+    <span class="sub" style="margin:0">resolved server-side to a compound id</span>
+  </div>
+
+  <div id="batchRow" class="row hidden" style="margin-top:12px; display:block">
+    <label for="items">items — one per line, <code>kind:id</code></label>
+    <textarea id="items">compound:CHEBI:10115
+compound:CHEBI:10115
+enzyme:NOPE
+bogus:x
+reaction:RHEA:10188
+enzyme:ENZ000073</textarea>
+    <button id="goBatch" style="margin-top:8px">Fetch batch</button>
+  </div>
+
+  <div class="chips" id="chips"></div>
+</div>
+
+<div id="result" class="hidden">
+  <div class="grid">
+    <div class="panel">
+      <h2>Entity</h2>
+      <div id="entity"></div>
+    </div>
+    <div class="panel">
+      <h2>Images <span id="imgCount" style="text-transform:none; letter-spacing:0"></span></h2>
+      <div id="gallery" class="gallery"></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Raw response</h2>
+    <pre id="raw"></pre>
+  </div>
+</div>
+
+<script>
+const SAMPLES = {
+  compound: ['CHEBI:10115', 'CHEBI:10213', 'POLYMER:17339'],
+  enzyme:   ['ENZ000073', 'ENZ000103', 'ENZ000011', 'ENZ001536'],
+  reaction: ['RHEA:10188', 'RHEA:10340'],
+  pathway:  [
+    'PATH_CHEBI:128769_CHEBI:175763',
+    'PATH_CHEBI:128769_CHEBI:58057_CHEBI:175763',
+    'PATH_CHEBI:10115_CHEBI:128769',
+  ],
+};
+
+const $ = id => document.getElementById(id);
+const apiBase = () => $('api').value.replace(/\/+$/, '');
+
+function setStatus(text, cls) {
+  $('status').textContent = text;
+  $('status').className = 'status' + (cls ? ' ' + cls : '');
+}
+
+// ---- controls -------------------------------------------------------------
+
+function renderChips() {
+  const kind = $('kind').value;
+  $('chips').innerHTML = '';
+  SAMPLES[kind].forEach(id => {
+    const el = document.createElement('span');
+    el.className = 'chip';
+    el.textContent = id;
+    el.onclick = () => { $('eid').value = id; runOne(); };
+    $('chips').appendChild(el);
+  });
+}
+
+$('kind').onchange = renderChips;
+$('mode').onchange = () => {
+  const batch = $('mode').value === 'batch';
+  $('oneRow').classList.toggle('hidden', batch);
+  $('smilesRow').classList.toggle('hidden', batch);
+  $('batchRow').classList.toggle('hidden', !batch);
+};
+$('go').onclick = runOne;
+$('goBatch').onclick = runBatch;
+$('goSmiles').onclick = runSmiles;
+$('eid').onkeydown = e => { if (e.key === 'Enter') runOne(); };
+$('smi').onkeydown = e => { if (e.key === 'Enter') runSmiles(); };
+renderChips();
+
+// Deep link: ?kind=enzyme&id=ENZ000073&api=http://host:8000 auto-fetches on load.
+(function () {
+  const q = new URLSearchParams(location.search);
+  if (q.get('api')) $('api').value = q.get('api');
+  if (q.get('kind')) { $('kind').value = q.get('kind'); renderChips(); }
+  if (q.get('id')) $('eid').value = q.get('id');
+  if (q.get('batch')) {
+    $('mode').value = 'batch';
+    $('mode').onchange();
+    $('items').value = decodeURIComponent(q.get('batch'));
+    runBatch();
+  } else if (q.get('id')) {
+    runOne();
+  }
+})();
+
+// ---- fetching -------------------------------------------------------------
+
+async function runOne() {
+  const kind = $('kind').value, id = $('eid').value.trim();
+  if (!id) return;
+  $('go').disabled = true;
+  setStatus('loading…');
+  const t0 = performance.now();
+  try {
+    const res = await fetch(`${apiBase()}/api/v1/bundle/${kind}/${encodeURIComponent(id)}`);
+    const json = await res.json();
+    const ms = Math.round(performance.now() - t0);
+    if (!json.success) { showFailure(json, ms); return; }
+    setStatus(`200 · ${ms} ms`, 'ok');
+    renderBundle(json.data);
+  } catch (e) {
+    setStatus('request failed: ' + e.message, 'err');
+  } finally {
+    $('go').disabled = false;
+  }
+}
+
+// SMILES 不走路径段: 它含 `/ \ # + @ [ ]`, 其中 `/` 即使编码成 %2F 也会在路由匹配前被解码、
+// 把路径切断。所以后端单开了一条无路径段的 GET, 这里用 URLSearchParams 编码查询串。
+async function runSmiles() {
+  const smiles = $('smi').value.trim();
+  if (!smiles) return;
+  $('goSmiles').disabled = true;
+  setStatus('loading…');
+  const t0 = performance.now();
+  try {
+    const qs = new URLSearchParams({ smiles });
+    const res = await fetch(`${apiBase()}/api/v1/bundle/compound?${qs}`);
+    const json = await res.json();
+    const ms = Math.round(performance.now() - t0);
+    if (!json.success) { showFailure(json, ms); return; }
+    setStatus(`200 · ${ms} ms · resolved to ${json.data.entityId}`, 'ok');
+    renderBundle(json.data);
+  } catch (e) {
+    setStatus('request failed: ' + e.message, 'err');
+  } finally {
+    $('goSmiles').disabled = false;
+  }
+}
+
+function showFailure(json, ms) {
+  setStatus(`${json.error.code}: ${json.error.message}  (${ms} ms)`, 'err');
+  showRaw(json, 'error');
+  $('entity').innerHTML = `<p style="color:var(--warn)">${esc(json.error.code)} — ${esc(json.error.message)}</p>`;
+  $('gallery').innerHTML = '';
+  $('imgCount').textContent = '';
+}
+
+async function runBatch() {
+  const lines = $('items').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const items = lines.map(line => {
+    const i = line.indexOf(':');
+    return { kind: line.slice(0, i).trim(), entityId: line.slice(i + 1).trim() };
+  });
+  if (!items.length) return;
+  $('goBatch').disabled = true;
+  setStatus('loading…');
+  const t0 = performance.now();
+  try {
+    const res = await fetch(`${apiBase()}/api/v1/bundle/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    });
+    const json = await res.json();
+    const ms = Math.round(performance.now() - t0);
+    if (!res.ok) { setStatus(`HTTP ${res.status}  (${ms} ms)`, 'err'); showRaw(json, 'error'); return; }
+    setStatus(`200 · ${ms} ms · ${json.meta.found}/${json.meta.total} found`, 'ok');
+    renderBatch(json);
+  } catch (e) {
+    setStatus('request failed: ' + e.message, 'err');
+  } finally {
+    $('goBatch').disabled = false;
+  }
+}
+
+// ---- rendering ------------------------------------------------------------
+
+function renderBundle(data) {
+  $('result').classList.remove('hidden');
+  $('entity').innerHTML = entityHtml(data.kind, data.entity);
+  renderGallery(data.images);
+  showRaw(data, data.kind);
+}
+
+function renderBatch(json) {
+  $('result').classList.remove('hidden');
+  const rows = json.data.items.map((it, n) => {
+    if (!it.found) {
+      return `<tr><td>${n}</td><td><code>${esc(it.kind)}</code></td><td><code>${esc(it.entityId)}</code></td>
+        <td colspan="3" style="color:var(--warn)">${esc(it.error.code)}: ${esc(it.error.message)}</td></tr>`;
+    }
+    return `<tr><td>${n}</td><td><code>${esc(it.kind)}</code></td><td><code>${esc(it.entityId)}</code></td>
+      <td>${it.bundle.images.length}</td><td>${label(it.bundle.entity)}</td>
+      <td><span class="chip" data-idx="${n}">view</span></td></tr>`;
+  }).join('');
+
+  $('entity').innerHTML = `
+    <p style="margin-top:0">
+      <strong>${json.meta.found}</strong> found ·
+      <strong>${json.meta.missing}</strong> missing ·
+      <strong>${json.meta.total}</strong> total
+    </p>
+    <p style="color:var(--muted); font-size:12.5px; margin-top:-6px">
+      Order matches the request. A missing item does not fail the whole call.
+    </p>
+    <table><thead><tr><th>#</th><th>kind</th><th>id</th><th>images</th><th>entity</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+
+  $('gallery').innerHTML = '';
+  $('imgCount').textContent = '— click "view" on a row';
+  $('entity').querySelectorAll('.chip').forEach(el => {
+    el.onclick = () => {
+      const it = json.data.items[+el.dataset.idx];
+      $('entity').innerHTML = entityHtml(it.bundle.kind, it.bundle.entity)
+        + `<button class="ghost" id="back" style="margin-top:14px">← back to list</button>`;
+      $('back').onclick = () => renderBatch(json);
+      renderGallery(it.bundle.images);
+      showRaw(it.bundle, it.bundle.kind);
+    };
+  });
+  showRaw(json, 'batch');
+}
+
+function renderGallery(images) {
+  $('imgCount').textContent = `— ${images.length} unique compound${images.length === 1 ? '' : 's'}`;
+  $('gallery').innerHTML = images.map(im => {
+    // imageUrl is relative by design — the client resolves it against the API base.
+    const src = im.imageUrl ? apiBase() + im.imageUrl : null;
+    const box = src
+      ? `<div class="box"><img src="${esc(src)}" alt="${esc(im.name)}" loading="lazy"
+             onerror="this.replaceWith(Object.assign(document.createElement('div'),
+               {className:'bad', textContent:'image failed to load'}))"></div>`
+      : `<div class="box"><span class="bad">No structure image</span></div>`;
+    return `<div class="mol ${src ? '' : 'none'}">
+      ${box}
+      <div class="nm" title="${esc(im.name)}">${esc(im.name)}</div>
+      <div class="id">${esc(im.compoundId)}</div>
+      <span class="src ${esc(im.source)}">${esc(im.source)}</span>
+    </div>`;
+  }).join('') || '<p style="color:var(--muted)">No compounds on this entity.</p>';
+}
+
+function label(e) {
+  return e.primaryName || e.name || e.equation || e.summary || e.reactionId || e.compoundId || '';
+}
+
+function entityHtml(kind, e) {
+  if (kind === 'pathway') {
+    const segs = e.segments.map(s => `<tr>
+      <td><code>${esc(s.sourceCompoundId)}</code></td>
+      <td>→</td>
+      <td><code>${esc(s.targetCompoundId)}</code></td>
+      <td>${s.edgeId ? '<code>' + esc(s.edgeId) + '</code>' : '<span class="tag">group</span> <code>' + esc(s.edgeGroupId) + '</code>'}</td>
+    </tr>`).join('');
+    const g = e.graph;
+    return `<div class="kv">
+      ${kv('Summary', e.summary)}
+      ${kv('Steps', e.stepCount)}
+      ${kv('Chain', e.compoundIds.join(' → '))}
+      ${kv('Scoped graph', g ? `${g.nodes.length} nodes / ${g.edges.length} edges / ${g.edgeGroups.length} groups` : null)}
+    </div>
+    <p style="color:var(--muted); font-size:12px; margin:12px 0 6px">
+      A pathway is not a stored row — it is recomputed from the compound chain, so this call
+      costs about as much as a pathway search. The id carries no filter context; pass
+      <code>?sourceTypes=</code> / <code>?reviewStatuses=</code> if you searched with filters.
+    </p>
+    <table><thead><tr><th>from</th><th></th><th>to</th><th>via</th></tr></thead>
+    <tbody>${segs}</tbody></table>`;
+  }
+  if (kind === 'compound') {
+    return `<div class="kv">
+      ${kv('Name', e.name)}${kv('ChEBI', e.chebiId)}
+      ${kv('Formula', e.formula)}${kv('Charge', e.charge)}
+      ${kv('Average mass', e.averageMass)}
+      ${kv('SMILES', e.smiles)}${kv('InChIKey', e.inchiKey)}
+      ${kv('Description', e.description)}${kv('ChEBI page', e.chebiUrl, true)}
+      ${kv('Stored image', e.structureImageUrl, true)}
+    </div>`;
+  }
+  if (kind === 'reaction') {
+    return `<div class="kv">
+      ${kv('Equation', e.equation)}${kv('Direction', e.direction)}
+      ${kv('EC number', e.ecNumber)}${kv('Rhea', e.rheaUrl, true)}
+      ${kv('Source', tag(e.sourceType))}${kv('Review', tag(e.reviewStatus))}
+      ${kv('Substrates', compounds(e.substrates))}${kv('Products', compounds(e.products))}
+      ${kv('Atom map', e.atomMapImageUrl, true)}
+    </div>`;
+  }
+  const g = e.gene || {};
+  const rxns = e.reactions.length
+    ? `<div class="scroll" style="margin-top:8px"><table>
+        <thead><tr><th>reaction</th><th>equation</th><th>EC</th><th>sub</th><th>prod</th></tr></thead>
+        <tbody>${e.reactions.map(r => `<tr>
+          <td><code>${esc(r.reactionId)}</code></td>
+          <td>${esc(r.equation)}</td>
+          <td>${esc(r.ecNumber || '—')}</td>
+          <td>${r.substrates.length}</td><td>${r.products.length}</td></tr>`).join('')}</tbody>
+      </table></div>`
+    : '<span class="empty">none</span>';
+  return `<div class="kv">
+    ${kv('Primary name', e.primaryName)}
+    ${kv('Secondary', e.secondaryNames.length ? e.secondaryNames.join(', ') : null)}
+    ${kv('UniProt', e.uniprotUrl, true)}
+    ${kv('Organism', e.organismName)}
+    ${kv('Source', tag(e.sourceType))}${kv('Review', tag(e.reviewStatus))}
+    ${kv('Reference score', e.deepSolnetScore)}${kv('Membrane', e.membrane)}
+    ${kv('Gene', g.geneName)}${kv('GenBank', g.genbankId)}
+    ${kv('Length / mass', [e.length, e.mass].filter(v => v != null).join(' aa / ') || null)}
+    ${kv('Sequence', e.sequence ? e.sequence.slice(0, 60) + '…' : null)}
+    ${kv('GO terms', e.goTerms.length || null)}
+    ${kv('Isoforms', e.isoforms.length || null)}
+    ${kv('Evidence', e.evidence.length || null)}
+    ${kv('External links', e.links.map(l => l.label).join(', ') || null)}
+  </div>
+  <h2 style="margin:16px 0 0">Reactions <span style="text-transform:none">(${e.reactions.length})</span></h2>
+  ${rxns}`;
+}
+
+const compounds = list => list.length
+  ? list.map(c => `<span class="tag">${esc(c.name)}</span>`).join('')
+  : '<span class="empty">none</span>';
+
+const tag = v => v ? `<span class="tag ${esc(v)}">${esc(v)}</span>` : null;
+
+function kv(k, v, isLink) {
+  let body;
+  if (v === null || v === undefined || v === '') body = '<span class="empty">—</span>';
+  else if (isLink && typeof v === 'string' && /^https?:/.test(v))
+    body = `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`;
+  else body = typeof v === 'string' && v.startsWith('<') ? v : esc(String(v));
+  return `<dt>${esc(k)}</dt><dd>${body}</dd>`;
+}
+
+function showRaw(obj, tagName) {
+  $('raw').textContent = JSON.stringify(obj, null, 2);
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+</script>
+</body>
+</html>

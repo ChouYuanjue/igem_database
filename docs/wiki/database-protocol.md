@@ -100,8 +100,10 @@ from the disk figures in §3.1. We have since pruned it; this section records wh
 **Almost none of it was ever in this repository.** The rules that kept it out (`/_*.py`,
 `/_*.ps1`, `/_*.log`, plus the five JSON patterns `/_graph_*.json`, `/_iso_*.json`, `/_ab_*.json`,
 `/_pool_*.json`, `/st_*.json`) are still in `.gitignore`. There is deliberately **no bare
-`/_*.json` rule** — it would also match the tracked `update_tool/_allnodes_inchikey.json`.
-The exceptions are called out in the table.
+`_*.json` rule** — a bare pattern ignores at any depth, so it would reach into `update_tool/`
+and match the tracked data there (historically `_allnodes_inchikey.json`; that file was removed
+2026-10-02 when `build_all_nodes.py` stopped fetching keys and went offline). The rules stay
+anchored. The exceptions are called out in the table.
 
 | Group | Count | Status | What it was |
 |---|---|---|---|
@@ -191,9 +193,9 @@ The collection stage and the query stage deliberately use **two different databa
 
 | Location | Dependencies |
 |---|---|
-| `backend/requirements.txt` | `fastapi`, `uvicorn[standard]`, `sqlalchemy[asyncio]`, **`aiomysql`**, `pydantic` v2, `pydantic-settings`, `python-dotenv`, `httpx`, `openpyxl` |
+| `backend/requirements.txt` | `fastapi`, `uvicorn[standard]`, `sqlalchemy[asyncio]`, **`aiomysql`**, `pydantic` v2, `pydantic-settings`, `python-dotenv`, `httpx`, `openpyxl`, **`rdkit`** |
 | `etl/requirements.txt` | `pandas`, `sqlalchemy`, **`pymysql`**, `requests` |
-| `update_tool/requirements.txt` | `requests` |
+| `update_tool/requirements.txt` | `requests`, **`rdkit`** |
 
 > **The two driver chains are not interchangeable.** `backend/requirements.txt` does not carry
 > `pymysql`, and `etl/requirements.txt` does not carry `aiomysql`. Installing one does not let you
@@ -203,6 +205,14 @@ The collection stage and the query stage deliberately use **two different databa
 > `etl_enzymes.py` calls the UniProt REST API to fill in fields missing from the local files, so
 > the ETL is not a fully offline step and needs `requests` as well. `update_tool/` needs it for the
 > same reason — every fetch step there talks to a remote API.
+>
+> `rdkit` is needed offline by `update_tool/`: `build_all_nodes.py` computes
+> `compound.inchi_key_derived` from each compound's SMILES. **The backend now carries it as well**, for
+> one route — `GET /api/v1/bundle/compound?smiles=` converts an incoming SMILES to an InChIKey
+> server-side (`app/utils/chemistry.py`), so a caller holding a SMILES string rather than a Ketcher
+> drawing can still reach a compound. It is the same conversion that produced `inchi_key_derived`, so
+> the two must stay on the same rdkit version. The **ETL still needs nothing**: the derived key is
+> computed at generation time and stored, and every other query path is plain string matching.
 
 ### 3.4 External program: NCBI BLAST+
 
@@ -292,7 +302,7 @@ offline from UniProt export columns is parsed offline — offline parsing is als
 | Source | Access method | What it provides |
 |---|---|---|
 | **Rhea** | SPARQL (`sparql.rhea-db.org`) + RDF | Reaction equations, physiological direction, EC numbers, reaction SMILES |
-| **ChEBI** | EBI FTP flat file (~50 MB archive) | Local SMILES / InChIKey mapping, avoiding per-record lookups |
+| **ChEBI** | EBI FTP flat files (~125 MB across four archives) | Local SMILES / InChIKey mapping, avoiding per-record lookups. `structures.tsv.gz` (92 MB of the total) supplies the official `standard_inchi_key`. |
 | **UniProt export columns** | Offline parse, no API calls | GO annotations, isoform sequences, references (PubMed), nucleotide accessions |
 | **DDBJ** | `getentry.ddbj.nig.ac.jp` | Nucleotide sequence links |
 | **Manual curation** | In-repo `update_tool/chebi_data/curation_overrides.tsv` | Human corrections to automatic matching |
@@ -392,7 +402,7 @@ loader extracts individual `CREATE TABLE` statements from it at runtime. Do not 
 | Table | Contents |
 |---|---|
 | `enzyme` | Enzyme master: UniProt ID, sequence, source type (swiss_prot / trembl) |
-| `compound` | Compounds: SMILES / InChI / InChIKey / ChEBI ID |
+| `compound` | Compounds: SMILES / InChI / InChIKey (official + derived) / ChEBI ID |
 | `reaction` | Reactions: Rhea ID, equation, direction, EC number |
 | `reaction_compound` | Substrate / product links with a `role` |
 | `enzyme_reaction_edge` | Enzyme–reaction edges (the graph itself) |
@@ -444,14 +454,34 @@ proxy rule and an SPA fallback (`try_files ... /index.html`) in front of `dist/`
 > **After restarting MySQL you must restart the backend.** Every connection in the pool goes stale
 > and every request returns 500 until it is restarted.
 
-### 7.1 Chemical informatics — a deliberate omission
+### 7.1 Chemical informatics — where it runs, and where it does not
 
-**We do not use RDKit, OpenBabel, or Indigo locally.** Instead:
+**Almost nothing in the serving path is computed from structure.** Structures are **pre-generated
+SVG** (`/assets/compounds/{chebi_id}/structure.svg`,
+`/assets/reactions/{rhea_id}/atom-map.svg`), and structure search is **exact InChIKey matching** —
+**not substructure search**. RDKit is the one exception, and it runs in exactly two places, both of
+which only ever turn a structure into a key:
 
-- Structures are **pre-generated SVG** (`/assets/compounds/{chebi_id}/structure.svg`,
-  `/assets/reactions/{rhea_id}/atom-map.svg`).
-- Structure search is **exact InChIKey matching** (the browser-side Ketcher editor computes the
-  InChIKey → `GET /api/v1/ketcher/search`) — **not substructure search**.
+- **Offline, in `update_tool/`**, to precompute the `inchi_key_derived` column (see below).
+- **On the backend**, for `GET /api/v1/bundle/compound?smiles=`. A caller who has a SMILES string but
+  no InChIKey would otherwise have no entry point: the drawing UI produces keys only from mouse
+  input. The backend converts the SMILES with RDKit (`app/utils/chemistry.py`) and then takes the
+  same two-column match described below. The response is identical in shape to
+  `GET /api/v1/bundle/compound/{compound_id}` — SMILES is just a different way of *naming* the
+  compound — and `data.entityId` reports what it resolved to. A SMILES that cannot be parsed, or one
+  describing a generic / R-group structure (which has no InChIKey at all), is rejected as an error
+  envelope rather than a 500.
+
+The ETL and the browser bundle carry no cheminformatics library. The web UI computes its keys in the
+browser, inside Ketcher (Indigo/WASM), and calls `GET /api/v1/ketcher/search?inchikey=`.
+
+Matching is against **two columns**, `compound.inchi_key` (ChEBI's official `standard_inchi_key`)
+**or** `compound.inchi_key_derived` (RDKit, computed at generation time from the row's own SMILES).
+The two disagree on exactly two compounds (`CHEBI:231826`, `CHEBI:53643`) where ChEBI's own record
+is self-inconsistent — its `smiles` and its `standard_inchi` describe different stereoisomers.
+Ketcher, fed the stored SMILES, reproduces the *derived* key, and so does the backend's RDKit on the
+`?smiles=` route, which is how those two stay reachable from either entry point. Only the official
+column is ever returned in API responses.
 
 So our structure search can find *the same compound*, but not *structurally similar compounds*.
 Please keep that boundary in mind when citing this feature.
@@ -627,6 +657,10 @@ it would not error, it would simply not exist.
 5. **The backend must be restarted after MySQL restarts**, or every request returns 500 (§7).
 6. **The solubility score is a model reference score**, not a calibrated probability, and no
    threshold in this database is validated against labels (§8).
+7. **A SMILES containing `*` resolves to nothing, on any route.** Such a string describes an R-group
+   or generic structure rather than a molecule, so it has no InChIKey and no cheminformatics toolkit
+   can produce one. Exactly 20 of the 730 rows carrying a SMILES are of this kind (which is also why
+   only 710 rows have an official key), and they are unreachable by structure lookup (§7.1).
 
 ---
 
