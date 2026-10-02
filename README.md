@@ -491,12 +491,8 @@ igem_database/
 | GET | `/compounds/{compoundId}/card` | 化合物卡片 |
 | GET | `/reactions/{reactionId}` | 反应详情 |
 | GET | `/bundle/{kind}/{entityId}` | 一次取回实体字段 + 其化合物结构图 URL（`kind` = `enzyme\|compound\|reaction\|pathway`） |
+| GET | `/bundle/compound?smiles=` | 按 SMILES 取化合物（服务端用 RDKit 转 InChIKey；响应与 `/bundle/compound/{id}` 同构） |
 | POST | `/bundle/batch` | 批量版（≤50 条，按入参顺序返回，单条查不到不影响整体） |
-
-`kind=pathway` 的 `entityId` 是一条化合物链（`PATH_A_B_C`），不是表里的一行 —— 它由
-`POST /search/pathways` 返回，这里按同一套规则**现算**回来，`entity.graph` 只含这一条链的边。
-id 里**不含筛选条件**，所以当初若用了 `sourceTypes`/`reviewStatuses` 搜索，取回时要带同样的
-查询参数，否则 segment 指向的边可能不是同一组。批量项放不下筛选参数，其中的 pathway 一律按不筛重建。
 | GET | `/blast/subjects` | 当前搜索集下的 BLAST 库序列数 |
 | POST | `/blast/search` | 发起 BLAST（按搜索集建库） |
 | GET | `/download/fields` | 可导出字段 |
@@ -505,6 +501,11 @@ id 里**不含筛选条件**，所以当初若用了 `sourceTypes`/`reviewStatus
 | GET | `/downloads/{filename}` | 取回生成的文件 |
 | GET | `/assets/reactions/{rheaId}/atom-map.svg` | 反应原子图 SVG |
 | GET | `/assets/compounds/{chebiId}/structure.svg` | 化合物结构图 SVG |
+
+`kind=pathway` 的 `entityId` 是一条化合物链（`PATH_A_B_C`），不是表里的一行 —— 它由
+`POST /search/pathways` 返回，这里按同一套规则**现算**回来，`entity.graph` 只含这一条链的边。
+id 里**不含筛选条件**，所以当初若用了 `sourceTypes`/`reviewStatuses` 搜索，取回时要带同样的
+查询参数，否则 segment 指向的边可能不是同一组。批量项放不下筛选参数，其中的 pathway 一律按不筛重建。
 
 ---
 
@@ -535,6 +536,10 @@ id 里**不含筛选条件**，所以当初若用了 `sourceTypes`/`reviewStatus
 |---|---|---|
 | 源代码（`backend/` `frontend/` `etl/` `update_tool/` `tools/` `sql/`） | Apache License 2.0 | [`LICENSE`](LICENSE) |
 | 派生的表（`for_*/`）与文档（`docs/`、`.docx`、`.png`、`.json`） | CC BY 4.0 | [`LICENSE-DATA`](LICENSE-DATA) |
+| 上游数据的原样再分发（`update_tool/chebi_data/`） | ChEBI 自己的条款（CC BY 4.0） | [`LICENSE-DATA`](LICENSE-DATA) |
+
+`update_tool/` 那一行指的是它的**代码**；其下的 `chebi_data/` 装的是 EBI 的 ChEBI 数据
+（流水线下载的原始压缩包，以及 `update_chebi_library.py` 从它们派生出的两张表），不是我们的作品。
 
 上游数据（UniProt / Rhea / ChEBI / DDBJ）的署名、随附的第三方软件（Ketcher）的许可与声明、
 以及 NCBI BLAST+ 与 DeepSolNet / ESM C 300M 为何**不**在本仓库内分发,都记在 [`NOTICE`](NOTICE)。

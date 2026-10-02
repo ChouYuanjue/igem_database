@@ -307,7 +307,7 @@ offline from UniProt export columns is parsed offline — offline parsing is als
 | **DDBJ** | `getentry.ddbj.nig.ac.jp` | Nucleotide sequence links |
 | **Manual curation** | In-repo `update_tool/chebi_data/curation_overrides.tsv` | Human corrections to automatic matching |
 
-External links (NCBI, EBI, PubChem, PubMed, DOI) are used only to generate outbound links; they are
+External links (NCBI, EBI, PubMed, DOI) are used only to generate outbound links; they are
 not stored in the database.
 
 ### 4.3 Measured dataset size (2026-09-20)

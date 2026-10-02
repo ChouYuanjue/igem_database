@@ -274,7 +274,7 @@ ETL 读的是**同一套 `IGEM_DB_*` 变量名**,但有自己的配置(`etl/conf
 | **DDBJ** | `getentry.ddbj.nig.ac.jp` | 核酸序列链接 |
 | **人工校订** | 仓库内 `update_tool/chebi_data/curation_overrides.tsv` | 对自动匹配结果的人工修正 |
 
-外部链接(NCBI、EBI、PubChem、PubMed、DOI)仅用于生成跳转,不入库。
+外部链接(NCBI、EBI、PubMed、DOI)仅用于生成跳转,不入库。
 
 ### 4.3 实测数据规模(2026-09-20)
 

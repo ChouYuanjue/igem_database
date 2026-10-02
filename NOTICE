@@ -12,6 +12,11 @@ covers the data and documentation in this repository (see `LICENSE-DATA`).
 |---|---|---|
 | Source code — `backend/`, `frontend/`, `etl/`, `update_tool/`, `tools/`, `sql/` | Apache License 2.0 | [`LICENSE`](LICENSE) |
 | Data and documentation — `for_*/`, `docs/`, `*.docx`, `*.png`, `*.json` | CC BY 4.0 | [`LICENSE-DATA`](LICENSE-DATA) |
+| Upstream data redistributed verbatim — `update_tool/chebi_data/` | ChEBI's own terms (CC BY 4.0) | [`LICENSE-DATA`](LICENSE-DATA) |
+
+`update_tool/` appears in the first row for its **code**. The `chebi_data/` subdirectory inside it is
+not ours: it holds the ChEBI flat-file archives the pipeline downloads, plus the two tables
+`update_chebi_library.py` derives from them. See *Upstream data* › ChEBI below.
 
 ## Upstream data
 
