@@ -381,22 +381,129 @@
   width: 216px;
   overflow: hidden auto;
   scrollbar-width: thin;
+  /* 展开方向:visibility 立刻恢复可见(延迟 0),否则往回划的那 220ms 里整块不可见。 */
+  transition:
+    transform var(--graph-sidebar-ease),
+    opacity var(--graph-sidebar-ease),
+    visibility 0s linear 0s;
+}
+
+/* 收起态。侧栏是浮在地图上的图层 —— SVG 从 150px 起，侧栏占 18..234，两者本来就重叠
+   84px，所以隐藏侧栏只是把已经被盖住的那段图露出来。地图几何一个字不动，节点位置不会
+   因开合而跳动。DOM 留着不卸载，筛选项菜单的开合状态不丢。
+   这里用「平移 + 淡出」而不是 display:none —— 后者不可过渡，收起是一帧闪没的。
+   visibility 必须带上「延迟到动画结束」的写法:它本身不能被平滑插值,靠 transition-delay
+   把翻成 hidden 的时刻推到位移走完之后,这样既划得动、划完又真正从 tab 顺序和无障碍树里
+   摘掉(否则键盘 Tab 会停在一堆看不见的按钮上)。 */
+.home-map-page .graph-filter-sidebar.is-collapsed {
+  transform: translateX(var(--graph-sidebar-slide));
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform var(--graph-sidebar-ease),
+    opacity var(--graph-sidebar-ease),
+    visibility 0s linear 220ms;
+}
+
+/* 收起后的展开键：与收起把手同款竖版小块，只是贴在屏幕左边缘(侧栏原来的位置已经空了,
+   把手留在 234px 会孤零零悬在地图中间)。因此无字、无内边距，左右边框随边缘取舍 ——
+   贴左边缘 => 左边不描边、只圆右侧。位置用与把手完全相同的中线表达式，y 不跳。 */
+.home-map-page .home-sidebar-reopen {
+  position: absolute;
+  left: 0;
+  top: calc((var(--graph-band-gap) + 100% - 72px) / 2);
+  transform: translateY(-50%);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 72px;
+  padding: 0;
+  border: 1px solid rgba(237, 227, 175, 0.4);
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+  background: linear-gradient(180deg, rgba(47, 67, 86, 0.96), rgba(31, 51, 72, 0.94));
+  box-shadow: 0 12px 28px rgba(8, 26, 58, 0.3);
+  color: rgba(248, 251, 255, 0.9);
+  cursor: pointer;
+  transition:
+    transform var(--graph-sidebar-ease),
+    opacity var(--graph-sidebar-ease),
+    visibility 0s linear 0s;
+}
+
+.home-map-page .home-sidebar-reopen:hover {
+  background: linear-gradient(180deg, rgba(58, 80, 101, 0.98), rgba(38, 60, 84, 0.96));
+  color: #fff;
+}
+
+/* 两个按钮的隐藏态是同一套写法,分开写只是为了各自补自己的位移:
+   展开键往左退 24px(块只有 18px 宽,退这点就完全出屏),
+   收起把手跟着侧栏一起左移 --graph-sidebar-slide,和面板同步出场。 */
+.home-map-page .home-sidebar-collapse.is-hidden,
+.home-map-page .home-sidebar-reopen.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform var(--graph-sidebar-ease),
+    opacity var(--graph-sidebar-ease),
+    visibility 0s linear 220ms;
+}
+
+.home-map-page .home-sidebar-reopen.is-hidden {
+  transform: translateY(-50%) translateX(-24px);
+}
+
+/* 收起时若还有筛选在生效，点一个小点 —— 无字之后没有别的地方能提示这件事。
+   竖版块只有 18px 宽，所以绝对定位顶在上沿，不跟箭头挤一行。 */
+.home-sidebar-reopen-dot {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--graph-gold, #f0e5b2);
 }
 
 .home-map-page .graph-filter-sidebar .mapping-pill {
   min-height: 40px;
 }
 
-/* 纵向节奏：筛选组之间是 .home-filter-group 的 margin 撑出的 16px，底下那几个菜单行
-   却只有 grid 的 2px，整条侧栏上松下紧。这里把三处「块边界」补到同一档 16px
-   （间距 = 上一项的 margin-bottom + grid gap 2px + 这一项的 margin-top），
+/* 「Graph controls」的菜单。app.css 给的是 `left: calc(100% + 8px)` —— 从 pill 向**右**
+   弹 230px。但侧栏容器是 `overflow: hidden auto`(横向 hidden)，裁剪框右边界就是侧栏右边缘，
+   菜单的可见宽度实测是 **0px** —— 点了等于没反应。
+   菜单只有留在裁剪框内才看得见，而 230px 装不进 204px 的内容宽，所以不能再往右弹。
+   改成在 pill 正**上方**展开、宽度贴合侧栏：上方到侧栏顶有 ~340px，容得下 230px 的菜单。
+   底边留 4px 缝，pill 上的「Graph controls」按钮仍可点(菜单不会盖住它，否则关不掉)。 */
+.home-map-page .graph-filter-sidebar .control-home-menu {
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: calc(100% + 4px);
+  width: auto;
+}
+
+/* 纵向节奏：分隔线是 .home-filter-group 自己的 border-bottom，线**上方**的留白来自
+   它自己的 padding-bottom(10px)，线**下方**却是「本组 margin-bottom + grid gap 2px +
+   下一块 margin-top」推出来的 —— 原来 7+2+7=16px，比线上方宽了六成，看着头轻脚重。
+   这里把组间距收到 4px，线下方落到 4+2+4=10px，与线上方齐平。
    菜单列表内部仍保持 2px 的紧排。 */
 .home-map-page .graph-filter-sidebar .home-filter-group {
-  margin: 7px 10px;
+  margin: 4px 10px;
+}
+
+/* 标题下面那一组(Organism)紧挨着标题,不吃 4px 的组间距 —— 组与组之间仍是 4px。 */
+.home-map-page .graph-filter-sidebar .home-filter-head + .home-filter-group {
+  margin-top: 3px;
 }
 
 .home-map-page .graph-filter-sidebar > .mapping-pill {
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .home-map-page .graph-filter-sidebar > .graph-zoom-controls {
@@ -418,6 +525,10 @@
   flex: 1 1 auto;
   border-bottom: 0;
   background: transparent;
+  /* 基础规则是 12px / 盒子高 34px。首页这条标题抬到 15px,盒子压到 26px ——
+     盒子一矮,「Filters」到下一行的间距跟着缩,不必再动下面的 margin。 */
+  font-size: 15px;
+  min-height: 26px;
 }
 
 .home-filter-reset {
@@ -434,6 +545,58 @@
 
 .home-filter-reset:hover {
   background: rgba(237, 227, 175, 0.2);
+}
+
+/* 收起按钮 = 侧栏右边缘外侧的一小片「抽屉把手」。必须是 aside 的**兄弟**节点而不能是
+   子节点：侧栏自己有 `overflow: hidden auto`，挂在里面的把手会被裁掉。
+   左坐标 = 侧栏左 18 + 宽 216，去掉左边框、只圆右侧，看起来像是从侧栏长出来的。 */
+.home-map-page .home-sidebar-collapse {
+  position: absolute;
+  left: 234px;
+  /* 竖直居中于侧栏。把手是侧栏的兄弟节点，`100%` 算的是**父容器**高度而不是侧栏高度,
+     所以不能直接写 50% —— 得用侧栏自己的两条边(上边 var(--graph-band-gap)、
+     下边 100% - 72px,与 .graph-filter-sidebar 的 top/bottom 同源)取中点。 */
+  top: calc((var(--graph-band-gap) + 100% - 72px) / 2);
+  transform: translateY(-50%);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 72px;
+  padding: 0;
+  border: 1px solid rgba(237, 227, 175, 0.4);
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+  background: linear-gradient(180deg, rgba(47, 67, 86, 0.96), rgba(31, 51, 72, 0.94));
+  color: rgba(248, 251, 255, 0.9);
+  cursor: pointer;
+  transition:
+    transform var(--graph-sidebar-ease),
+    opacity var(--graph-sidebar-ease),
+    visibility 0s linear 0s;
+}
+
+.home-map-page .home-sidebar-collapse.is-hidden {
+  transform: translateY(-50%) translateX(var(--graph-sidebar-slide));
+}
+
+.home-map-page .home-sidebar-collapse:hover {
+  background: linear-gradient(180deg, rgba(58, 80, 101, 0.98), rgba(38, 60, 84, 0.96));
+  color: #fff;
+}
+
+/* 系统开了「减少动态效果」就直接切,不做位移。必须把六个选择器都列上:
+   收起/展开两个方向各自读的是不同规则里的 transition,只覆盖一半会出现「收得动、弹不动」。 */
+@media (prefers-reduced-motion: reduce) {
+  .home-map-page .graph-filter-sidebar,
+  .home-map-page .graph-filter-sidebar.is-collapsed,
+  .home-map-page .home-sidebar-collapse,
+  .home-map-page .home-sidebar-collapse.is-hidden,
+  .home-map-page .home-sidebar-reopen,
+  .home-map-page .home-sidebar-reopen.is-hidden {
+    transition: none;
+  }
 }
 
 .home-filter-group {
@@ -804,7 +967,9 @@
 
 .home-map-page .home-scope-feedback {
   position: absolute;
-  top: 126px;
+  /* 原值 126px 比旧标题带底(142)还高 16px,是压着标题带画的;现在改成跟着
+     标题带底走(+4 的余量),桌面端渲染值不变,窄屏由下面的媒体查询接管。 */
+  top: calc(var(--graph-band-bottom) + 4px);
   left: 50%;
   z-index: 8;
   display: flex;
@@ -899,7 +1064,7 @@
 
 @media (max-width: 900px) {
   .home-map-page .home-scope-feedback {
-    top: 142px;
+    top: var(--graph-band-bottom);
     max-width: 88vw;
     white-space: normal;
     flex-wrap: wrap;
@@ -1168,7 +1333,7 @@
 /* Composer pill floating over the map, below the title band. */
 .home-map-page .home-pathway-composer {
   position: absolute;
-  top: 150px;
+  top: calc(var(--graph-band-bottom) + 8px);
   left: 50%;
   z-index: 9;
   display: flex;
@@ -1581,7 +1746,7 @@
 /* Compact pill shown while the composer is hidden (keeps the map clear). */
 .home-map-page .pw-composer-launcher {
   position: absolute;
-  top: 150px;
+  top: calc(var(--graph-band-bottom) + 8px);
   left: 50%;
   z-index: 9;
   display: inline-flex;
@@ -1623,10 +1788,11 @@
 }
 
 /* Floating 连星 pill, parked directly beneath the composer/launcher capsule so
-   it never overlaps the pathway card list on the right. */
+   it never overlaps the pathway card list on the right. 原值是 196px,那等于
+   「标题带底 142 + 54」;标题带降到 64px 后跟着走,由变量推出,别再写死。 */
 .home-map-page .trace-start-button {
   position: absolute;
-  top: 196px;
+  top: calc(var(--graph-band-bottom) + 54px);
   left: 50%;
   z-index: 9;
   display: inline-flex;
@@ -1660,7 +1826,7 @@
  * user is walking the map. */
 .home-map-page .pw-trace-bar {
   position: absolute;
-  top: 150px;
+  top: calc(var(--graph-band-bottom) + 8px);
   left: 50%;
   z-index: 9;
   display: flex;
@@ -1835,7 +2001,7 @@
    overlaps a floating panel). */
 .home-map-page .pw-detail-bar {
   position: absolute;
-  top: 150px;
+  top: calc(var(--graph-band-bottom) + 8px);
   left: 50%;
   z-index: 9;
   display: flex;

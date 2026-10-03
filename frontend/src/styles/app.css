@@ -21,6 +21,17 @@
   --paper: #f5fbff;
   --paper-muted: #d9e7f1;
   --shadow: 0 22px 50px rgba(2, 8, 14, 0.35);
+
+  /* 图谱/首页头部两段的纵向尺寸。整页所有「绝对定位的纵坐标」都是这两段加起来推出来的,
+     以前是 58 + 84 这个和在十条规则里各写一遍裸数字(142 / 150 / 160),
+     改一次高度要同步改九处 —— 漏一处就错位。现在只改下面这两行。
+     ≤760px 断点有另一套尺寸,在本文件末尾的媒体查询里重定义同样这两个变量。 */
+  --graph-nav-h: 58px;
+  --graph-band-h: 62px;
+  /* 两段之和 = 地图区的上边界,也是所有浮层往下让位的基准线 */
+  --graph-band-bottom: calc(var(--graph-nav-h) + var(--graph-band-h));
+  /* 左侧 Filters 栏比基准线再低 18px */
+  --graph-band-gap: calc(var(--graph-band-bottom) + 18px);
 }
 
 * {
@@ -5370,7 +5381,7 @@ body:has(.home-map-page) {
 
 .map-expanding-feedback {
   left: 24px;
-  top: 142px;
+  top: var(--graph-band-bottom);
   transform: none;
   min-width: 0;
   z-index: 5;
@@ -6530,6 +6541,13 @@ body:has(.home-map-page) {
   --graph-navy-2: #102b55;
   --graph-ink: #111827;
   --graph-muted: #5f6f82;
+  /* 侧栏「划出」时向左平移的距离 = 左侧留白 18 + 侧栏宽 216 + 12 余量(描边/阴影),
+     平移到位时右边缘停在 -12px,整块在屏幕外。
+     放在 .home-map-page 上是因为要用它的有三个东西 —— 侧栏本身、收起把手、展开键 ——
+     它们必须同距同速,否则动画会散架。 */
+  --graph-sidebar-slide: -246px;
+  /* 一个过渡时长,三处共用,改这里就是改全部。 */
+  --graph-sidebar-ease: 220ms cubic-bezier(0.22, 1, 0.36, 1);
   --graph-line: #b8c7d2;
   width: 100%;
   height: 100vh;
@@ -6606,7 +6624,7 @@ body:has(.home-map-page) {
   right: 0;
   top: 0;
   z-index: 13;
-  height: 58px;
+  height: var(--graph-nav-h);
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(360px, 460px) minmax(300px, 1fr);
   align-items: center;
@@ -6770,10 +6788,10 @@ body:has(.home-map-page) {
 .graph-title-band {
   left: 0;
   right: 0;
-  top: 58px;
+  top: var(--graph-nav-h);
   z-index: 3;
-  height: 84px;
-  padding: 12px 18px 0;
+  height: var(--graph-band-h);
+  padding: 5px 18px 0;
   border-bottom: 1px solid rgba(184, 199, 210, 0.44);
   background: rgba(234, 245, 250, 0.76);
   backdrop-filter: blur(8px);
@@ -6793,9 +6811,9 @@ body:has(.home-map-page) {
 }
 
 .graph-title-band h1 {
-  margin: 10px 0 0;
+  margin: 3px 0 0;
   color: #071225;
-  font-size: clamp(22px, 2.4vw, 30px);
+  font-size: clamp(17px, 1.7vw, 21px);
   line-height: 1.14;
   font-weight: 800;
   letter-spacing: 0;
@@ -6803,7 +6821,7 @@ body:has(.home-map-page) {
 
 .graph-filter-sidebar {
   left: 18px;
-  top: 160px;
+  top: var(--graph-band-gap);
   bottom: 72px;
   z-index: 5;
   width: 140px;
@@ -7027,6 +7045,14 @@ body:has(.home-map-page) {
   font-weight: 700;
 }
 
+/* 但 Graph controls 是个浅色浮层菜单,深色数值在那上面是对的 —— 上面那条要留着。
+   真正读不出来的是 DeepSolNet Score 那一格:它在深色侧栏里,却继承了同一条深色。
+   所以这条只能收窄到侧栏里的 .home-filter-subgroup,不能用 .graph-filter-sidebar 兜底
+   —— 菜单在 DOM 上也是侧栏的后代,用侧栏选择器会把它一起刷白(实测白底白字)。 */
+.home-map-page .graph-filter-sidebar .home-filter-subgroup .control-value {
+  color: rgba(248, 251, 255, 0.92);
+}
+
 .home-map-page .control-menu-actions {
   display: grid;
   gap: 4px;
@@ -7065,10 +7091,10 @@ body:has(.home-map-page) {
 }
 
 .home-map-page .home-live-map {
-  inset: 142px 0 64px 150px;
+  inset: var(--graph-band-bottom) 0 64px 150px;
   z-index: 1;
   width: calc(100% - 150px);
-  height: calc(100% - 206px);
+  height: calc(100% - var(--graph-band-bottom) - 64px);
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -7459,6 +7485,14 @@ body:has(.home-map-page) {
   align-self: start;
   justify-self: center;
   margin-top: 1px;
+  /* 基础规则给的 padding: 1px 6px 是按 32px 见方调的。这里被压到 26px,去掉 2px 边框
+     只剩 22px,再被左右各 6px 的 padding 吃掉,留给 18px 图标的内容盒只有 10px ——
+     图标从内容盒左缘溢出,一路压到右边框上(实测左边空 8px、右边空 0px)。
+     清掉 padding 改用 flex 居中,图标位置就不再依赖按钮做多大。 */
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .home-map-page .enzyme-card-copy,
@@ -7621,9 +7655,18 @@ body:has(.home-map-page) {
     font-size: 18px;
   }
 
+  /* 窄屏：导航折成两行(118px)，标题栏也跟着变高。变量在 :root 上重定义，
+     所以 --graph-band-bottom / --graph-band-gap 会自动跟着重算 ——
+     下面 .graph-filter-sidebar 的 top 之所以仍是裸数字，是因为窄屏这里
+     是固定 240px、并不等于「基准线 + 18」。 */
+  :root {
+    --graph-nav-h: 118px;
+    --graph-band-h: 108px;
+  }
+
   .graph-title-band {
-    top: 118px;
-    height: 108px;
+    top: var(--graph-nav-h);
+    height: var(--graph-band-h);
     padding: 12px;
   }
 

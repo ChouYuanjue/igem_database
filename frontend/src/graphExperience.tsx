@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronsUp,
   CircleHelp,
@@ -586,6 +587,14 @@ export function CompoundGraphHome({
   /** The composer pill can be collapsed so the union-graph result is not blocked;
    *  a successful run hides it and shows a compact launcher instead. */
   const [composerOpen, setComposerOpen] = useState(true)
+  /** The left filter panel collapses to give the map the whole width. The panel is
+   *  an overlay (the SVG starts at 150px, the panel spans 18..234), so hiding it
+   *  only *reveals* graph that was already rendered underneath — the map geometry
+   *  is deliberately left alone, which keeps node positions stable across a toggle.
+   *  The aside stays mounted and is moved out with transform + visibility rather
+   *  than display:none — the latter cannot be transitioned, and unmounting would
+   *  drop the filter-menu open/closed state. */
+  const [filtersOpen, setFiltersOpen] = useState(true)
   /** The composer unmounts every time it collapses (after a run, or by hand via
    *  the launcher), so its slot text has to live up here — otherwise backing out
    *  of a result reopens the composer blank and the chain just described is gone.
@@ -2360,7 +2369,11 @@ export function CompoundGraphHome({
           <h1>Compound Relationship Graph: Enzymes & Pathways</h1>
         </div>
 
-        <aside className="graph-filter-sidebar" aria-label="Graph filters and controls">
+        <aside
+          className={`graph-filter-sidebar ${filtersOpen ? '' : 'is-collapsed'}`}
+          aria-label="Graph filters and controls"
+          aria-hidden={!filtersOpen}
+        >
           <div className="home-filter-head">
             <p className="graph-filter-title">Filters</p>
             {anyFilterActive && (
@@ -2567,6 +2580,30 @@ export function CompoundGraphHome({
             {queueCount > 0 && <span>{queueCount}</span>}
           </button>
         </aside>
+
+        {/* 两个按钮都常驻,只切 `is-hidden` 而不条件渲染 —— 卸载是一帧消失的,没得过渡。
+            `is-hidden` 里带 visibility:hidden(延迟到动画结束),所以隐藏的那个不会留在
+            tab 顺序里。 */}
+        <button
+          className={`home-sidebar-collapse ${filtersOpen ? '' : 'is-hidden'}`}
+          type="button"
+          onClick={() => setFiltersOpen(false)}
+          aria-label="Collapse filters"
+          title="Collapse filters"
+        >
+          <ChevronLeft size={14} />
+        </button>
+
+        <button
+          className={`home-sidebar-reopen ${filtersOpen ? 'is-hidden' : ''}`}
+          type="button"
+          onClick={() => setFiltersOpen(true)}
+          aria-label="Show filters"
+          title="Show filters"
+        >
+          <ChevronRight size={14} />
+          {anyFilterActive && <span className="home-sidebar-reopen-dot" aria-hidden="true" />}
+        </button>
 
         {loading && <div className="home-map-feedback"><Loader2 size={18} className="spin" /> Loading backend graph...</div>}
         {error && !loading && <div className="home-map-feedback error-state"><X size={18} /> {error}</div>}
