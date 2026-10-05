@@ -398,7 +398,8 @@ function App() {
           </div>
           <div>
             <div className="brand-name">Atlas EDGE</div>
-            <div className="brand-subtitle">Enzyme Dataset and Graph Explorer</div>
+            <div className="brand-subtitle"><b>E</b>nzyme <b>D</b>ataset and <b>G</b>raph <b>E</b>xplorer</div>
+            <a className="sidebar-suite-link" href="/">Atlas COMPASS ↗</a>
           </div>
           <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} title="Close navigation">
             <X size={17} />
@@ -458,6 +459,7 @@ function App() {
             <strong>{viewLabel(view)}</strong>
           </div>
           <div className="topbar-actions">
+            <a className="topbar-suite-link" href="/">Atlas COMPASS ↗</a>
             <div className="sync-state">
               <span className="status-dot" />
               Live dataset

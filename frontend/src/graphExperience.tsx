@@ -45,6 +45,7 @@ import {
   type HomeGraphEdgeGroupItem,
   type HomePathwayCard,
 } from './api'
+import { AtlasBrand } from './components/AtlasBrand'
 import { SearchSetControl } from './components/SearchSetControl'
 import { StructureSearchDrawer } from './components/StructureSearchDrawer'
 import { fileNameFromUrl, saveFile } from './lib/saveFile'
@@ -594,7 +595,10 @@ export function CompoundGraphHome({
    *  The aside stays mounted and is moved out with transform + visibility rather
    *  than display:none — the latter cannot be transitioned, and unmounting would
    *  drop the filter-menu open/closed state. */
-  const [filtersOpen, setFiltersOpen] = useState(true)
+  const [filtersOpen, setFiltersOpen] = useState(() => {
+    if (typeof window === 'undefined') return true
+    return !window.matchMedia('(max-width: 760px)').matches
+  })
   /** The composer unmounts every time it collapses (after a run, or by hand via
    *  the launcher), so its slot text has to live up here — otherwise backing out
    *  of a result reopens the composer blank and the chain just described is gone.
@@ -2277,12 +2281,7 @@ export function CompoundGraphHome({
     <div className={`home-map-page${hidden ? ' map-hidden' : ''}`} style={homeMapStyle}>
       <section className="atlas-map-stage atlas-live-stage" aria-label="Interactive compound graph homepage">
         <header className="graph-top-nav">
-          <button type="button" className="atlas-brand" onClick={handleBrandHome} title="Back to the Atlas home map" aria-label="Atlas EDGE home">
-            <span className="atlas-logo">
-              <img className="atlas-logo-mark" src="/database/starase-atlas-logo.png" alt="" />
-            </span>
-            <span>Atlas EDGE</span>
-          </button>
+          <AtlasBrand onActivate={handleBrandHome} />
 
           <div className={`home-search-bar ${searchMode === 'pathway' ? 'pathway-mode' : ''}`}>
             <div className="home-mode-toggle" role="group" aria-label="Map search mode">
@@ -3760,12 +3759,7 @@ export function EnzymeDetailView({ enzymeId, onBack, onToggleQueue, isQueued, qu
         <header className="graph-top-nav enzyme-topnav">
           {/* `onBack` is a real history pop, so it returns wherever the user came
               from — which may be the search table, not the home map. */}
-          <button type="button" className="atlas-brand" onClick={onBack} title="Back" aria-label="Back">
-            <span className="atlas-logo">
-              <img className="atlas-logo-mark" src="/database/starase-atlas-logo.png" alt="" />
-            </span>
-            <span>Atlas EDGE</span>
-          </button>
+          <AtlasBrand onActivate={onBack} title="Back" ariaLabel="Back" />
 
           <div className="enzyme-topnav-slot">
             <SearchSetControl value={searchSet} onChange={onSearchSetChange} />

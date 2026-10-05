@@ -21,6 +21,7 @@ import type {
   DownloadResult,
 } from '../api'
 import { fileNameFromUrl, saveFile } from '../lib/saveFile'
+import { AtlasBrand } from '../components/AtlasBrand'
 import { StructureSearchDrawer } from '../components/StructureSearchDrawer'
 
 type Tab = 'enzymes' | 'pathways'
@@ -377,18 +378,7 @@ export function DownloadsPage({
           as a button it navigated to the view it was already on, which reads
           as a download control that does nothing. */}
       <header className="graph-top-nav downloads-topnav">
-        <button
-          type="button"
-          className="atlas-brand"
-          onClick={onResetHome}
-          title="Back to the Atlas home map"
-          aria-label="Atlas EDGE home"
-        >
-          <span className="atlas-logo">
-            <img className="atlas-logo-mark" src="/database/starase-atlas-logo.png" alt="" />
-          </span>
-          <span>Atlas EDGE</span>
-        </button>
+        <AtlasBrand onActivate={onResetHome} />
 
         <div className="downloads-topnav-slot">
           <span className="download-list-button is-current" aria-current="page" title="This is the download list">
