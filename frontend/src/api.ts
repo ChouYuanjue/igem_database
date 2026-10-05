@@ -1,6 +1,6 @@
 import type { Entity, EntityKind, GraphEdge, GraphNode } from './types'
 
-const API_PREFIX = '/api/v1'
+const API_PREFIX = '/database/api/v1'
 
 type ApiResponse<T> = {
   success: boolean
@@ -297,7 +297,7 @@ function compoundEntity(compound: CompoundCard): Entity {
 
 function compoundImageUrl(compound: CompoundCard) {
   const chebiId = compound.chebiId || compound.compoundId
-  if (chebiId?.startsWith('CHEBI:')) return `/api/v1/assets/compounds/${encodeURIComponent(chebiId)}/structure.svg?v=4`
+  if (chebiId?.startsWith('CHEBI:')) return `/database/api/v1/assets/compounds/${encodeURIComponent(chebiId)}/structure.svg?v=4`
   return compound.structureImageUrl || undefined
 }
 

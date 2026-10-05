@@ -2248,7 +2248,7 @@ export function CompoundGraphHome({
 
   const compoundImageUrl = (compound: HomeGraphCompound) => {
     const chebiId = compound.chebiId || compound.compoundId
-    if (chebiId?.startsWith('CHEBI:')) return `/api/v1/assets/compounds/${encodeURIComponent(chebiId)}/structure.svg?v=4`
+    if (chebiId?.startsWith('CHEBI:')) return `/database/api/v1/assets/compounds/${encodeURIComponent(chebiId)}/structure.svg?v=4`
     return compound.structureImageUrl || null
   }
   const searchPlaceholder = 'Search compounds or enzymes (e.g. limonene, germacrene D synthase)'
@@ -2279,7 +2279,7 @@ export function CompoundGraphHome({
         <header className="graph-top-nav">
           <button type="button" className="atlas-brand" onClick={handleBrandHome} title="Back to the Atlas home map" aria-label="Atlas EDGE home">
             <span className="atlas-logo">
-              <img className="atlas-logo-mark" src="/starase-atlas-logo.png" alt="" />
+              <img className="atlas-logo-mark" src="/database/starase-atlas-logo.png" alt="" />
             </span>
             <span>Atlas EDGE</span>
           </button>
@@ -3762,7 +3762,7 @@ export function EnzymeDetailView({ enzymeId, onBack, onToggleQueue, isQueued, qu
               from — which may be the search table, not the home map. */}
           <button type="button" className="atlas-brand" onClick={onBack} title="Back" aria-label="Back">
             <span className="atlas-logo">
-              <img className="atlas-logo-mark" src="/starase-atlas-logo.png" alt="" />
+              <img className="atlas-logo-mark" src="/database/starase-atlas-logo.png" alt="" />
             </span>
             <span>Atlas EDGE</span>
           </button>
@@ -4246,7 +4246,7 @@ function CompoundTag({ compound }: { compound: HomeGraphCompound }) {
 }
 
 function reactionAtomMapUrl(rheaId: string) {
-  return `/api/v1/assets/reactions/${encodeURIComponent(rheaId)}/atom-map.svg`
+  return `/database/api/v1/assets/reactions/${encodeURIComponent(rheaId)}/atom-map.svg`
 }
 
 /** The atom-mapped reaction drawing, with the attribution Rhea's CC BY 4.0

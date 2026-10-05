@@ -6,6 +6,7 @@ import react from '@vitejs/plugin-react'
 declare const process: { env: Record<string, string | undefined> }
 
 export default defineConfig({
+  base: '/database/',
   plugins: [react()],
   server: {
     // Overridable so this codebase can run beside another stack on 5173/8000:
@@ -13,6 +14,11 @@ export default defineConfig({
     port: Number(process.env.VITE_PORT) || 5173,
     strictPort: false,
     proxy: {
+      '/database/api': {
+        target: process.env.VITE_BACKEND || 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/database/, ''),
+      },
       '/api': {
         target: process.env.VITE_BACKEND || 'http://127.0.0.1:8000',
         changeOrigin: true,

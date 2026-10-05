@@ -127,7 +127,7 @@ export function StructureSearchDrawer({
 
   const structureImageUrl = (compound: StructureSearchCompoundHit) => {
     const chebiId = compound.chebiId || compound.compoundId
-    if (chebiId?.startsWith('CHEBI:')) return `/api/v1/assets/compounds/${encodeURIComponent(chebiId)}/structure.svg?v=4`
+    if (chebiId?.startsWith('CHEBI:')) return `/database/api/v1/assets/compounds/${encodeURIComponent(chebiId)}/structure.svg?v=4`
     return compound.structureImageUrl || null
   }
 
@@ -154,7 +154,7 @@ export function StructureSearchDrawer({
           <div className={`structure-drawer-status ${error ? 'is-error' : ''}`}>{status}</div>
 
           <div className="structure-editor-block">
-            <iframe ref={iframeRef} title="Ketcher structure editor" src="/ketcher_standalone/index.html" />
+            <iframe ref={iframeRef} title="Ketcher structure editor" src="/database/ketcher_standalone/index.html" />
           </div>
 
           <div className="structure-drawer-actions">

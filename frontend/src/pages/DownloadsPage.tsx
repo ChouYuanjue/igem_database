@@ -385,7 +385,7 @@ export function DownloadsPage({
           aria-label="Atlas EDGE home"
         >
           <span className="atlas-logo">
-            <img className="atlas-logo-mark" src="/starase-atlas-logo.png" alt="" />
+            <img className="atlas-logo-mark" src="/database/starase-atlas-logo.png" alt="" />
           </span>
           <span>Atlas EDGE</span>
         </button>
