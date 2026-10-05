@@ -1,0 +1,105 @@
+/* Responsive guardrails for Atlas EDGE.
+   Loaded last so page-specific desktop grids cannot override the shared
+   tablet/phone collapse rules. No data, graph, or API behavior lives here. */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root,
+.app-shell,
+.main-area,
+.home-map-page,
+.atlas-live-stage,
+.search-table-stage,
+.enzyme-atlas-stage {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.graph-top-nav > *,
+.search-table-search-slot,
+.enzyme-topnav-slot,
+.downloads-topnav-slot,
+.home-search-bar,
+.home-search-bar input {
+  min-width: 0;
+}
+
+.home-map-page .atlas-brand > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@supports (height: 100dvh) {
+  @media (min-width: 761px) {
+    .home-map-page:not(.downloads-atlas-page),
+    .home-map-page:not(.downloads-atlas-page) .atlas-live-stage,
+    .search-table-stage,
+    .enzyme-atlas-stage {
+      height: 100dvh;
+    }
+  }
+}
+
+@media (max-width: 1120px) {
+  .search-table-page .graph-top-nav,
+  .enzyme-atlas-page .graph-top-nav {
+    grid-template-columns: minmax(130px, 190px) minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+
+@media (max-width: 860px) {
+  .search-table-page .graph-top-nav,
+  .enzyme-atlas-page .graph-top-nav,
+  .downloads-atlas-page .graph-top-nav {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-content: center;
+    gap: 8px;
+    height: auto;
+    min-height: 112px;
+    padding: 8px 12px;
+  }
+
+  .search-table-search-slot,
+  .enzyme-topnav-slot,
+  .downloads-topnav-slot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-table-body,
+  .enzyme-atlas-body {
+    top: 112px;
+  }
+
+  .search-table-page .atlas-brand,
+  .enzyme-atlas-page .atlas-brand,
+  .downloads-atlas-page .atlas-brand {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .home-map-page input,
+  .search-table-page input,
+  .enzyme-atlas-page input,
+  .downloads-atlas-page input,
+  .structure-drawer input {
+    font-size: 16px;
+  }
+
+  .home-map-page .home-search-bar,
+  .search-table-page .home-search-bar,
+  .enzyme-atlas-page .home-search-bar,
+  .downloads-atlas-page .home-search-bar {
+    width: 100%;
+    max-width: 100%;
+  }
+}

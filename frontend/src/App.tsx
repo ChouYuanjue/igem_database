@@ -397,8 +397,8 @@ function App() {
             <Network size={19} strokeWidth={2.4} />
           </div>
           <div>
-            <div className="brand-name">Terpene Atlas</div>
-            <div className="brand-subtitle">NJU-CHINA 2026</div>
+            <div className="brand-name">Atlas EDGE</div>
+            <div className="brand-subtitle">Enzyme Dataset and Graph Explorer</div>
           </div>
           <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} title="Close navigation">
             <X size={17} />
@@ -453,7 +453,7 @@ function App() {
             <Menu size={20} />
           </button>
           <div className="crumbs">
-            <span>Terpene Atlas</span>
+            <span>Atlas EDGE</span>
             <ChevronRight size={14} />
             <strong>{viewLabel(view)}</strong>
           </div>

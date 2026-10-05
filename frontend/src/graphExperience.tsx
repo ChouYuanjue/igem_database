@@ -551,7 +551,7 @@ export function CompoundGraphHome({
   blastSession?: BlastSession | null
   autoBlastScope?: { sessionId: number; nonce: number } | null
   onAutoBlastScopeConsumed?: () => void
-  /** Starase Atlas brand → drop every active scope/search and head home. */
+  /** Atlas EDGE brand → drop every active scope/search and head home. */
   onResetHome?: () => void
   /** 搜索集（检索范围，`[]` = 全部）。图上的取数、联想、scope 检索、展开、通路都按它圈定。 */
   searchSet: string[]
@@ -2277,11 +2277,11 @@ export function CompoundGraphHome({
     <div className={`home-map-page${hidden ? ' map-hidden' : ''}`} style={homeMapStyle}>
       <section className="atlas-map-stage atlas-live-stage" aria-label="Interactive compound graph homepage">
         <header className="graph-top-nav">
-          <button type="button" className="atlas-brand" onClick={handleBrandHome} title="Back to the Atlas home map" aria-label="Starase Atlas home">
+          <button type="button" className="atlas-brand" onClick={handleBrandHome} title="Back to the Atlas home map" aria-label="Atlas EDGE home">
             <span className="atlas-logo">
               <img className="atlas-logo-mark" src="/starase-atlas-logo.png" alt="" />
             </span>
-            <span>Starase Atlas</span>
+            <span>Atlas EDGE</span>
           </button>
 
           <div className={`home-search-bar ${searchMode === 'pathway' ? 'pathway-mode' : ''}`}>
@@ -3764,7 +3764,7 @@ export function EnzymeDetailView({ enzymeId, onBack, onToggleQueue, isQueued, qu
             <span className="atlas-logo">
               <img className="atlas-logo-mark" src="/starase-atlas-logo.png" alt="" />
             </span>
-            <span>Starase Atlas</span>
+            <span>Atlas EDGE</span>
           </button>
 
           <div className="enzyme-topnav-slot">

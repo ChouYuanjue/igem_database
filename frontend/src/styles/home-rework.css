@@ -1220,7 +1220,7 @@
   opacity: 0.9;
 }
 /* ---------------------------------------------------------------------------
- * Clickable brand ("Starase Atlas") — home control on both top bars.
+ * Clickable brand ("Atlas EDGE") — home control on both top bars.
  * The brand used to be inert text; now it navigates home + clears the search
  * state. Strip the native button chrome while keeping the existing brand look,
  * then give it a subtle hover/focus affordance. Both pages mount the brand
